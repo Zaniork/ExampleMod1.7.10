@@ -3,10 +3,15 @@ package com.myname.mymodid;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryPoolMXBean;
+import java.lang.management.MemoryType;
+import java.lang.management.MemoryUsage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,14 +43,15 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.EnumDifficulty;
 import net.minecraft.world.GameRules;
 import net.minecraft.world.World;
 import net.minecraftforge.client.IRenderHandler;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.living.LivingEvent;
-import net.minecraftforge.event.entity.living.LivingSpawnEvent;
 import net.minecraftforge.event.terraingen.DecorateBiomeEvent;
+import net.minecraftforge.event.world.ChunkEvent;
 import net.minecraftforge.event.world.WorldEvent;
 
 @Mod(modid = MyMod.MODID, version = Tags.VERSION, name = "MyMod", acceptedMinecraftVersions = "[1.7.10]")
@@ -54,26 +60,44 @@ public class MyMod {
     public static final String MODID = "mymodid";
     public static final Logger LOG = LogManager.getLogger(MODID);
 
-    // ---------- ajustes (pode editar os números) ----------
-    static final int FPS_NORMAL = 40;                          // 27
+    // ================= AJUSTES (pode editar os números) =================
+    // índices dos arrays = nível do Governador: 0 liso, 1 leve, 2 pesado, 3 emergência
+    static final int FPS_NORMAL = 40;
     static final int FPS_EMERGENCY = 30;
-    static final int BASE_CHUNKS = 5;                          // 6: teto de distância (cliente e servidor interno)
-    static final double[] FREEZE_RADIUS = {48, 48, 24, 16};    // 1: congela mobs vanilla além disso (por nível)
-    static final int[] AI_INTERVAL = {2, 3, 4, 4};             // 26: mobs entre 24 blocos e o raio de congelar
-    static final int[] CLEAN_INTERVAL = {600, 400, 200, 100};  // ticks entre limpezas de itens (por nível)
-    static final int ENTITY_CAP = 80;                          // nível 3: máximo de mobs vanilla
-    static final double TILE_RENDER_DIST_SQ = 256.0;           // 21: 16 blocos ao quadrado
+    static final int BASE_CHUNKS = 5;                             // teto da distância de renderização
+    static final double[] FREEZE_RADIUS = {48, 48, 24, 16};       // congela mobs vanilla além disso
+    static final int[] AI_INTERVAL = {2, 3, 4, 4};                // IA dos mobs entre 24 blocos e o raio acima
+    static final int[] CLEAN_INTERVAL = {600, 400, 200, 100};     // ticks entre limpezas de itens
+    static final int ENTITY_CAP = 80;                             // nível 3: máximo de mobs vanilla
+    static final double[] MOB_RENDER_DIST = {16, 16, 16, 8};      // D4: desenho de mobs
+    static final double[] TILE_DIST_SQ = {256, 256, 256, 64};     // D4: tile entities (16 e 8 blocos ao quadrado)
+    static final int[] SPAWN_EVERY = {2, 2, 4, 4};                // busca de spawn a cada N ticks (precisa dividir 400)
+    static final int CROWD_LIMIT = 8;                             // 41: mobs por quadrado de 3x3 blocos
+    static final double BUDGET_MS = 35.0;                         // Ω2: orçamento de tempo por tick
+    static final int BURST_THRESHOLD = 16;                        // rajada: chunks carregados por segundo
+    static final int BURST_TICKS = 200;                           // rajada: duração (10 s)
+    static final double BURST_RADIUS = 24.0;                      // rajada: congela mobs vanilla além disso
+    static final double MEM_HIGH = 0.80;                          // Ω3: memória alta
+    static final double MEM_CRIT = 0.90;                          // Ω3: memória crítica
 
-    // nível do Governador Omega (0 = liso ... 3 = emergência)
+    // ================= ESTADO COMPARTILHADO =================
     static volatile int level = 0;
     static volatile double serverMs = 0;
     static volatile double frameMs = 0;
+    static volatile int burstTicks = 0;
+    static volatile int chunkLoads = 0;
+    static volatile long tickStartNs = 0;
+    static int perfLevel = 0;
+    static int memFloor = 0;
     static int gcCountdown = -1;
+
+    private static final Map<Integer, double[]> PLAYER_POS = new HashMap<Integer, double[]>();
+    private static final Map<Integer, HashMap<Long, int[]>> DENSITY = new HashMap<Integer, HashMap<Long, int[]>>();
 
     @SidedProxy(clientSide = "com.myname.mymodid.ClientProxy", serverSide = "com.myname.mymodid.CommonProxy")
     public static CommonProxy proxy;
 
-    // ---------- proteção: nunca mexe em entidades de outros mods ----------
+    // ================= PROTEÇÃO: nunca mexe em entidades de outros mods =================
     private static final Map<Class<?>, Boolean> VANILLA_CLASS = new ConcurrentHashMap<Class<?>, Boolean>();
 
     static boolean isVanillaClass(Class<?> c) {
@@ -86,8 +110,8 @@ public class MyMod {
     }
 
     static boolean isProtected(Entity ent) {
-        if (!(ent instanceof EntityLiving)) return true; // jogadores e outros
-        if (!isVanillaClass(ent.getClass())) return true; // mobs/personagens de mods (DBC etc.)
+        if (!(ent instanceof EntityLiving)) return true;          // jogadores e outros
+        if (!isVanillaClass(ent.getClass())) return true;         // mobs/personagens de mods (DBC etc.)
         EntityLiving el = (EntityLiving) ent;
         if (el.hasCustomNameTag()) return true;
         if (el.getLeashed()) return true;
@@ -106,6 +130,62 @@ public class MyMod {
         return name != null && name.startsWith("minecraft:");
     }
 
+    // ================= 40: posição dos jogadores em cache =================
+    static double nearestPlayerSq(World w, Entity en) {
+        double[] buf = PLAYER_POS.get(w.provider.dimensionId);
+        if (buf == null || buf.length == 0) return -1;
+        double best = Double.MAX_VALUE;
+        for (int i = 0; i < buf.length; i += 3) {
+            double dx = en.posX - buf[i];
+            double dy = en.posY - buf[i + 1];
+            double dz = en.posZ - buf[i + 2];
+            double d = dx * dx + dy * dy + dz * dz;
+            if (d < best) best = d;
+        }
+        return best;
+    }
+
+    static long cellKey(Entity en) {
+        long cx = (long) Math.floor(en.posX / 3.0);
+        long cz = (long) Math.floor(en.posZ / 3.0);
+        return (cx << 32) ^ (cz & 0xFFFFFFFFL);
+    }
+
+    static boolean isCrowded(World w, Entity en) {
+        HashMap<Long, int[]> dens = DENSITY.get(w.provider.dimensionId);
+        if (dens == null) return false;
+        int[] c = dens.get(Long.valueOf(cellKey(en)));
+        return c != null && c[0] > CROWD_LIMIT;
+    }
+
+    static boolean overBudget() {
+        long s = tickStartNs;
+        if (s == 0) return false;
+        return (System.nanoTime() - s) > (long) (BUDGET_MS * 1.0e6);
+    }
+
+    // ================= Ω3: medida de memória (após a última limpeza do Java) =================
+    static double memoryRatio() {
+        try {
+            long max = Runtime.getRuntime().maxMemory();
+            for (MemoryPoolMXBean p : ManagementFactory.getMemoryPoolMXBeans()) {
+                if (p.getType() != MemoryType.HEAP) continue;
+                String n = p.getName();
+                if (n.contains("Old") || n.contains("Tenured")) {
+                    MemoryUsage u = p.getCollectionUsage();
+                    if (u == null) u = p.getUsage();
+                    long m = u.getMax() > 0 ? u.getMax() : max;
+                    return (double) u.getUsed() / (double) m;
+                }
+            }
+        } catch (Throwable t) {
+            // sem acesso: usa a medida simples abaixo
+        }
+        Runtime rt = Runtime.getRuntime();
+        return (double) (rt.totalMemory() - rt.freeMemory()) / (double) rt.maxMemory();
+    }
+
+    // ================= CICLO DE VIDA =================
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         proxy.preInit(event);
@@ -115,11 +195,13 @@ public class MyMod {
     public void init(FMLInitializationEvent event) {
         proxy.init(event);
 
-        FMLCommonHandler.instance().bus().register(new ItemCleaner());
+        FMLCommonHandler.instance().bus().register(new WorldCache());
         FMLCommonHandler.instance().bus().register(new Governor());
+        FMLCommonHandler.instance().bus().register(new SpawnToggle());
+        FMLCommonHandler.instance().bus().register(new ItemCleaner());
         MinecraftForge.TERRAIN_GEN_BUS.register(new NoGrass());
-        MinecraftForge.EVENT_BUS.register(new SpawnLimiter());
         MinecraftForge.EVENT_BUS.register(new EntityThrottle());
+        MinecraftForge.EVENT_BUS.register(new ChunkWatch());
         MinecraftForge.EVENT_BUS.register(new WorldRules());
         if (event.getSide().isClient()) {
             MinecraftForge.EVENT_BUS.register(new ClientPerf());
@@ -133,7 +215,6 @@ public class MyMod {
         proxy.postInit(event);
     }
 
-    // jogo terminou de carregar: limpa a memória e instala o corte de tile entities
     @Mod.EventHandler
     public void loadComplete(FMLLoadCompleteEvent event) {
         System.gc();
@@ -144,12 +225,81 @@ public class MyMod {
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
+        perfLevel = 0;
+        memFloor = 0;
         level = 0;
         serverMs = 0;
+        burstTicks = 0;
+        chunkLoads = 0;
+        tickStartNs = System.nanoTime();
         proxy.serverStarting(event);
     }
 
-    // ---------- limpador de itens (só itens vanilla) + teto de mobs no nível 3 ----------
+    // ================= 40 e 41: cache de jogadores e densidade (servidor) =================
+    public static class WorldCache {
+        @SubscribeEvent
+        public void onWorldTick(TickEvent.WorldTickEvent e) {
+            if (e.phase != TickEvent.Phase.START || e.world.isRemote) return;
+            World w = e.world;
+            Integer dim = Integer.valueOf(w.provider.dimensionId);
+
+            List pl = w.playerEntities;
+            int n = pl.size();
+            double[] buf = PLAYER_POS.get(dim);
+            if (buf == null || buf.length != n * 3) {
+                buf = new double[n * 3];
+                PLAYER_POS.put(dim, buf);
+            }
+            for (int i = 0; i < n; i++) {
+                EntityPlayer p = (EntityPlayer) pl.get(i);
+                buf[i * 3] = p.posX;
+                buf[i * 3 + 1] = p.posY;
+                buf[i * 3 + 2] = p.posZ;
+            }
+
+            if (w.getTotalWorldTime() % 4 == 0) {
+                HashMap<Long, int[]> dens = DENSITY.get(dim);
+                if (dens == null) {
+                    dens = new HashMap<Long, int[]>();
+                    DENSITY.put(dim, dens);
+                }
+                dens.clear();
+                List all = w.loadedEntityList;
+                for (int i = 0; i < all.size(); i++) {
+                    Object o = all.get(i);
+                    if (o instanceof EntityLiving && !isProtected((Entity) o)) {
+                        Long key = Long.valueOf(cellKey((Entity) o));
+                        int[] c = dens.get(key);
+                        if (c == null) dens.put(key, new int[] {1});
+                        else c[0]++;
+                    }
+                }
+            }
+        }
+    }
+
+    // ================= 4 e 35: busca de spawn natural em ticks alternados =================
+    public static class SpawnToggle {
+        @SubscribeEvent
+        public void onWorldTick(TickEvent.WorldTickEvent e) {
+            if (e.phase != TickEvent.Phase.START || e.world.isRemote) return;
+            World w = e.world;
+            long t = w.getTotalWorldTime();
+            boolean on = (t % SPAWN_EVERY[level] == 0) || (t % 400 == 0);
+            boolean hostile = w.difficultySetting != EnumDifficulty.PEACEFUL;
+            w.setAllowedSpawnTypes(on && hostile, on);
+        }
+    }
+
+    // ================= rajada de chunks: conta carregamentos =================
+    public static class ChunkWatch {
+        @SubscribeEvent
+        public void onChunkLoad(ChunkEvent.Load e) {
+            if (!e.world.isRemote) chunkLoads++;
+        }
+    }
+
+    // ================= limpador de itens (só vanilla) + teto de mobs no nível 3 =================
     public static class ItemCleaner {
         private static final int MIN_AGE = 20 * 10;
 
@@ -186,9 +336,9 @@ public class MyMod {
         for (Object o : new ArrayList<Object>(w.loadedEntityList)) {
             if (o instanceof EntityLiving && !isProtected((Entity) o)) {
                 EntityLiving el = (EntityLiving) o;
-                EntityPlayer p = w.getClosestPlayerToEntity(el, -1.0D);
-                if (p == null) return;
-                list.add(new Far(el, el.getDistanceSqToEntity(p)));
+                double d = nearestPlayerSq(w, el);
+                if (d < 0) return;
+                list.add(new Far(el, d));
             }
         }
         int excess = list.size() - ENTITY_CAP;
@@ -202,7 +352,7 @@ public class MyMod {
         for (int i = 0; i < excess; i++) list.get(i).e.setDead();
     }
 
-    // ---------- sem grama alta, flores e arbusto seco ----------
+    // ================= sem grama alta, flores e arbusto seco =================
     public static class NoGrass {
         @SubscribeEvent
         public void onDecorate(DecorateBiomeEvent.Decorate e) {
@@ -218,18 +368,7 @@ public class MyMod {
         }
     }
 
-    // ---------- metade dos mobs vanilla naturais não nasce ----------
-    public static class SpawnLimiter {
-        @SubscribeEvent
-        public void onCheckSpawn(LivingSpawnEvent.CheckSpawn e) {
-            if (!isVanillaClass(e.entityLiving.getClass())) return;
-            if (e.world.rand.nextInt(2) == 0) {
-                e.setResult(Event.Result.DENY);
-            }
-        }
-    }
-
-    // ---------- congela / desacelera mobs vanilla distantes (servidor) ----------
+    // ================= 1, 26, 41, Ω2 e rajada: controle de mobs vanilla (servidor) =================
     public static class EntityThrottle {
         @SubscribeEvent
         public void onLivingUpdate(LivingEvent.LivingUpdateEvent e) {
@@ -237,26 +376,35 @@ public class MyMod {
             World w = base.worldObj;
             if (w.isRemote || isProtected(base)) return;
 
-            EntityPlayer p = w.getClosestPlayerToEntity(base, -1.0D);
-            if (p == null) return;
+            double d2 = nearestPlayerSq(w, base);
+            if (d2 < 0) return;
 
             int lv = level;
-            double d2 = base.getDistanceSqToEntity(p);
             double freeze = FREEZE_RADIUS[lv];
+            if (burstTicks > 0 && freeze > BURST_RADIUS) freeze = BURST_RADIUS;
             if (d2 > freeze * freeze) {
                 e.setCanceled(true);
                 return;
             }
-            if (d2 > 24.0D * 24.0D) {
-                int interval = AI_INTERVAL[lv];
-                if ((w.getTotalWorldTime() + base.getEntityId()) % interval != 0) {
-                    e.setCanceled(true);
-                }
+
+            long t = w.getTotalWorldTime();
+            int id = base.getEntityId();
+
+            if (d2 > 24.0D * 24.0D && (t + id) % AI_INTERVAL[lv] != 0) {
+                e.setCanceled(true);
+                return;
+            }
+            if ((t + id) % 2 != 0 && isCrowded(w, base)) {
+                e.setCanceled(true);
+                return;
+            }
+            if (d2 > 12.0D * 12.0D && (t + id) % 3 != 0 && overBudget()) {
+                e.setCanceled(true);
             }
         }
     }
 
-    // ---------- ticks aleatórios mais lentos (3 -> 2) ----------
+    // ================= 17: ticks aleatórios mais lentos (3 -> 2) =================
     public static class WorldRules {
         @SubscribeEvent
         public void onWorldLoad(WorldEvent.Load e) {
@@ -268,24 +416,31 @@ public class MyMod {
         }
     }
 
-    // ---------- Governador Omega: sobe e desce o nível conforme o desempenho ----------
+    // ================= Governador Omega: nível por desempenho (Ω2) e por memória (Ω3) =================
     public static class Governor {
-        private long start;
         private double avg = 20.0;
         private int sinceEval = 0;
+        private int winTicks = 0;
         private int goodTicks = 0;
+        private long lastGc = 0;
 
         @SubscribeEvent
         public void onServerTick(TickEvent.ServerTickEvent e) {
             if (e.phase == TickEvent.Phase.START) {
-                start = System.nanoTime();
+                tickStartNs = System.nanoTime();
                 return;
             }
-            double ms = (System.nanoTime() - start) / 1.0e6;
+            double ms = (System.nanoTime() - tickStartNs) / 1.0e6;
             avg = avg * 0.95 + ms * 0.05;
             serverMs = avg;
-            sinceEval++;
-            if (sinceEval >= 100) { // a cada ~5 s
+
+            if (burstTicks > 0) burstTicks--;
+            if (++winTicks >= 20) {
+                winTicks = 0;
+                if (chunkLoads >= BURST_THRESHOLD) burstTicks = BURST_TICKS;
+                chunkLoads = 0;
+            }
+            if (++sinceEval >= 100) {
                 sinceEval = 0;
                 evaluate();
             }
@@ -297,27 +452,40 @@ public class MyMod {
             boolean good = serverMs < 30.0 && (fm <= 0 || fm < 38.0);
             if (bad) {
                 goodTicks = 0;
-                if (level < 3) {
-                    level++;
-                    LOG.info("Omega: nivel " + level);
-                }
+                if (perfLevel < 3) perfLevel++;
             } else if (good) {
                 goodTicks += 100;
-                if (goodTicks >= 900 && level > 0) { // ~45 s liso para descer
-                    level--;
+                if (goodTicks >= 900 && perfLevel > 0) {
+                    perfLevel--;
                     goodTicks = 0;
-                    LOG.info("Omega: nivel " + level);
                 }
             } else {
                 goodTicks = 0;
             }
+
+            double ratio = memoryRatio();
+            if (ratio > MEM_CRIT) memFloor = 3;
+            else if (ratio > MEM_HIGH) {
+                if (memFloor < 2) memFloor = 2;
+            } else if (ratio < 0.60) memFloor = 0;
+            else if (memFloor == 3) memFloor = 2;
+
+            int newLevel = Math.max(perfLevel, memFloor);
+            if (newLevel != level) {
+                level = newLevel;
+                LOG.info("Omega: nivel " + newLevel + " | tick " + (int) serverMs + " ms | memoria " + (int) (ratio * 100) + "%");
+            }
+
+            long now = System.currentTimeMillis();
+            if (ratio > MEM_HIGH && now - lastGc > 120000L && serverMs < 25.0 && burstTicks == 0) {
+                lastGc = now;
+                System.gc();
+            }
         }
     }
 
-    // ---------- cliente: sem céu/nuvens/chuva, mobs vanilla a 16 blocos ----------
+    // ================= cliente: sem céu/nuvens/chuva e D4 (mobs vanilla perto) =================
     public static class ClientPerf {
-        private static final double MAX_DIST = 16.0;
-
         private static class Empty extends IRenderHandler {
             @Override
             public void render(float partialTicks, WorldClient world, Minecraft mc) {}
@@ -337,13 +505,14 @@ public class MyMod {
             Entity player = Minecraft.getMinecraft().thePlayer;
             if (player == null || e.entity == player) return;
             if (isProtected(e.entity)) return;
-            if (e.entity.getDistanceSqToEntity(player) > MAX_DIST * MAX_DIST) {
+            double max = MOB_RENDER_DIST[level];
+            if (e.entity.getDistanceSqToEntity(player) > max * max) {
                 e.setCanceled(true);
             }
         }
     }
 
-    // ---------- cliente: não desenha tile entities vanilla distantes ----------
+    // ================= 21 e D4: tile entities vanilla distantes não são desenhadas =================
     public static class ClientTileOpt {
         public static class LimitedRenderer extends TileEntitySpecialRenderer {
             private final TileEntitySpecialRenderer inner;
@@ -354,7 +523,7 @@ public class MyMod {
 
             @Override
             public void renderTileEntityAt(TileEntity te, double x, double y, double z, float pt) {
-                if (isVanillaClass(te.getClass()) && (x * x + y * y + z * z) > TILE_RENDER_DIST_SQ) return;
+                if (isVanillaClass(te.getClass()) && (x * x + y * y + z * z) > TILE_DIST_SQ[level]) return;
                 inner.renderTileEntityAt(te, x, y, z, pt);
             }
         }
@@ -380,7 +549,7 @@ public class MyMod {
         }
     }
 
-    // ---------- cliente: limpa a memória ao entrar e ao sair de um mundo ----------
+    // ================= cliente: limpa a memória ao entrar e ao sair de um mundo =================
     public static class MemoryTrim {
         @SubscribeEvent
         public void onWorldLoad(WorldEvent.Load e) {
@@ -393,7 +562,7 @@ public class MyMod {
         }
     }
 
-    // ---------- cliente: opções forçadas, FPS e distância pelo nível ----------
+    // ================= cliente: opções forçadas, FPS e distância pelo nível =================
     public static class ClientSettings {
         private long lastFrame = 0;
         private int userChunks = -1;
@@ -431,16 +600,16 @@ public class MyMod {
 
             if (gs.ambientOcclusion != 0) gs.ambientOcclusion = 0; // iluminação suave off
             if (gs.particleSetting != 2) gs.particleSetting = 2;   // partículas mínimas
-            if (gs.fancyGraphics) gs.fancyGraphics = false;        // gráficos rápidos
+            if (gs.fancyGraphics) gs.fancyGraphics = false;        // 13: gráficos rápidos
 
             int lv = level;
-            int fps = lv >= 3 ? FPS_EMERGENCY : FPS_NORMAL;
+            int fps = lv >= 3 ? FPS_EMERGENCY : FPS_NORMAL;       // 27
             if (gs.limitFramerate != fps) gs.limitFramerate = fps;
 
             if (mc.theWorld == null) return;
 
             int cur = gs.renderDistanceChunks;
-            if (cur != appliedChunks) userChunks = cur; // o jogador mudou a opção
+            if (cur != appliedChunks) userChunks = cur;           // o jogador mudou a opção
             int base = Math.min(userChunks, BASE_CHUNKS);
             int target = base;
             switch (lv) {
