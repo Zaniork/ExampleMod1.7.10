@@ -1,8 +1,8 @@
 package com.myname.mymodid;
 
+import cpw.mods.fml.client.registry.ClientRegistry;
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.Mod.EventHandler;
-import cpw.mods.fml.common.SidedProxy;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
 import cpw.mods.fml.common.registry.GameRegistry;
@@ -22,17 +22,16 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
 import net.minecraftforge.client.IItemRenderer;
+import net.minecraftforge.client.MinecraftForgeClient;
 import net.minecraftforge.common.util.ForgeDirection;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.lwjgl.opengl.GL11;
 
-@Mod(modid = "mymodid", name = "My Mod", version = "1.0")
+@Mod(modid = Tags.MODID, name = Tags.MODNAME, version = Tags.VERSION)
 public class MyMod {
 
-    @SidedProxy(
-        clientSide = "com.myname.mymodid.ClientProxy",
-        serverSide = "com.myname.mymodid.CommonProxy"
-    )
-    public static CommonProxy proxy;
+    public static final Logger LOG = LogManager.getLogger(Tags.MODID);
 
     public static Block gabineteBlock;
     public static Block monitorBlock;
@@ -57,7 +56,23 @@ public class MyMod {
 
     @EventHandler
     public void init(FMLInitializationEvent event) {
-        proxy.registerRenderers();
+        if (event.getSide() == Side.CLIENT) {
+            ClientSetup.register();
+        }
+    }
+
+    // tudo de cliente fica aqui dentro, o server ignora essa classe inteira
+    @SideOnly(Side.CLIENT)
+    public static class ClientSetup {
+        public static void register() {
+            ClientRegistry.bindTileEntitySpecialRenderer(TileEntityGabinete.class, new RenderGabinete());
+            ClientRegistry.bindTileEntitySpecialRenderer(TileEntityMonitor.class,  new RenderMonitor());
+
+            MinecraftForgeClient.registerItemRenderer(Item.getItemFromBlock(gabineteBlock), new RenderItemGabinete());
+            MinecraftForgeClient.registerItemRenderer(Item.getItemFromBlock(monitorBlock),  new RenderItemMonitor());
+            MinecraftForgeClient.registerItemRenderer(ramItem,         new RenderItemRAM());
+            MinecraftForgeClient.registerItemRenderer(processadorItem, new RenderItemCPU());
+        }
     }
 
     // ========== BLOCOS ==========
