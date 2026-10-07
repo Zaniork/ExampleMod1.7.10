@@ -1,6 +1,5 @@
 package com.myname.mymodid;
 
-import cpw.mods.fml.client.registry.ClientRegistry;
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.Mod.EventHandler;
 import cpw.mods.fml.common.SidedProxy;
@@ -23,7 +22,6 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
 import net.minecraftforge.client.IItemRenderer;
-import net.minecraftforge.client.MinecraftForgeClient;
 import net.minecraftforge.common.util.ForgeDirection;
 import org.lwjgl.opengl.GL11;
 
@@ -31,8 +29,8 @@ import org.lwjgl.opengl.GL11;
 public class MyMod {
 
     @SidedProxy(
-        clientSide = "com.myname.mymodid.MyMod$ClientProxy",
-        serverSide = "com.myname.mymodid.MyMod$CommonProxy"
+        clientSide = "com.myname.mymodid.ClientProxy",
+        serverSide = "com.myname.mymodid.CommonProxy"
     )
     public static CommonProxy proxy;
 
@@ -60,24 +58,6 @@ public class MyMod {
     @EventHandler
     public void init(FMLInitializationEvent event) {
         proxy.registerRenderers();
-    }
-
-    // ========== PROXIES ==========
-    public static class CommonProxy {
-        public void registerRenderers() {}
-    }
-
-    @SideOnly(Side.CLIENT)
-    public static class ClientProxy extends CommonProxy {
-        @Override
-        public void registerRenderers() {
-            ClientRegistry.bindTileEntitySpecialRenderer(TileEntityGabinete.class, new RenderGabinete());
-            ClientRegistry.bindTileEntitySpecialRenderer(TileEntityMonitor.class,  new RenderMonitor());
-            MinecraftForgeClient.registerItemRenderer(Item.getItemFromBlock(gabineteBlock), new RenderItemGabinete());
-            MinecraftForgeClient.registerItemRenderer(Item.getItemFromBlock(monitorBlock),  new RenderItemMonitor());
-            MinecraftForgeClient.registerItemRenderer(ramItem,         new RenderItemRAM());
-            MinecraftForgeClient.registerItemRenderer(processadorItem, new RenderItemCPU());
-        }
     }
 
     // ========== BLOCOS ==========
