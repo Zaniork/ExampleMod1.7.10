@@ -1,4 +1,4 @@
-package com.exemplo.pcmod;
+package com.myname.mymodid;
 
 import cpw.mods.fml.client.registry.ClientRegistry;
 import cpw.mods.fml.common.Mod;
@@ -27,12 +27,12 @@ import net.minecraftforge.client.MinecraftForgeClient;
 import net.minecraftforge.common.util.ForgeDirection;
 import org.lwjgl.opengl.GL11;
 
-@Mod(modid = "pcmod", name = "PC Mod", version = "1.0")
-public class PCMod {
+@Mod(modid = "mymodid", name = "My Mod", version = "1.0")
+public class MyMod {
 
     @SidedProxy(
-        clientSide = "com.exemplo.pcmod.PCMod$ClientProxy",
-        serverSide = "com.exemplo.pcmod.PCMod$CommonProxy"
+        clientSide = "com.myname.mymodid.MyMod$ClientProxy",
+        serverSide = "com.myname.mymodid.MyMod$CommonProxy"
     )
     public static CommonProxy proxy;
 
@@ -53,8 +53,8 @@ public class PCMod {
         GameRegistry.registerItem(ramItem, "ram");
         GameRegistry.registerItem(processadorItem, "processador");
 
-        GameRegistry.registerTileEntity(TileEntityGabinete.class, "pcmod.gabinete");
-        GameRegistry.registerTileEntity(TileEntityMonitor.class,  "pcmod.monitor");
+        GameRegistry.registerTileEntity(TileEntityGabinete.class, "mymodid.gabinete");
+        GameRegistry.registerTileEntity(TileEntityMonitor.class,  "mymodid.monitor");
     }
 
     @EventHandler
@@ -102,7 +102,6 @@ public class PCMod {
         @Override
         public boolean onBlockActivated(World world, int x, int y, int z, EntityPlayer player,
                                         int side, float hx, float hy, float hz) {
-            // shift + mão vazia = girar 90°
             if (player.isSneaking() && player.getHeldItem() == null) {
                 if (!world.isRemote) {
                     int meta = world.getBlockMetadata(x, y, z);
@@ -138,7 +137,6 @@ public class PCMod {
             super(Material.iron);
             setHardness(2.0F);
             setStepSound(soundTypeMetal);
-            // bounds simétricos em XZ para a rotação não deformar a colisão
             setBlockBounds(0.10F, 0.0F, 0.10F, 0.90F, 0.90F, 0.90F);
         }
         @Override public TileEntity createNewTileEntity(World w, int meta) { return new TileEntityMonitor(); }
@@ -169,9 +167,11 @@ public class PCMod {
     // ========== ITENS ==========
     public static class ItemRAM extends Item {
         public ItemRAM() { super(); maxStackSize = 16; }
+        @Override public String getItemStackDisplayName(ItemStack stack) { return "Memória RAM"; }
     }
     public static class ItemProcessador extends Item {
         public ItemProcessador() { super(); maxStackSize = 16; }
+        @Override public String getItemStackDisplayName(ItemStack stack) { return "Processador"; }
     }
 
     // ========== TILE ENTITIES ==========
@@ -229,22 +229,16 @@ public class PCMod {
                            float r, float g, float b) {
         GL11.glColor3f(r, g, b);
         GL11.glBegin(GL11.GL_QUADS);
-        // baixo
         GL11.glVertex3f(x1, y1, z1); GL11.glVertex3f(x2, y1, z1);
         GL11.glVertex3f(x2, y1, z2); GL11.glVertex3f(x1, y1, z2);
-        // cima
         GL11.glVertex3f(x1, y2, z1); GL11.glVertex3f(x1, y2, z2);
         GL11.glVertex3f(x2, y2, z2); GL11.glVertex3f(x2, y2, z1);
-        // frente
         GL11.glVertex3f(x1, y1, z1); GL11.glVertex3f(x1, y2, z1);
         GL11.glVertex3f(x2, y2, z1); GL11.glVertex3f(x2, y1, z1);
-        // tras
         GL11.glVertex3f(x1, y1, z2); GL11.glVertex3f(x2, y1, z2);
         GL11.glVertex3f(x2, y2, z2); GL11.glVertex3f(x1, y2, z2);
-        // esq
         GL11.glVertex3f(x1, y1, z1); GL11.glVertex3f(x1, y1, z2);
         GL11.glVertex3f(x1, y2, z2); GL11.glVertex3f(x1, y2, z1);
-        // dir
         GL11.glVertex3f(x2, y1, z1); GL11.glVertex3f(x2, y2, z1);
         GL11.glVertex3f(x2, y2, z2); GL11.glVertex3f(x2, y1, z2);
         GL11.glEnd();
@@ -264,34 +258,25 @@ public class PCMod {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             GL11.glDisable(GL11.GL_LIGHTING);
 
-            // chassi da torre
             box(-0.35F, 0.00F, -0.35F,  0.35F, 1.00F,  0.35F, 0.22F, 0.22F, 0.25F);
-            // painel frontal
             box(-0.32F, 0.02F,  0.33F,  0.32F, 0.98F,  0.36F, 0.35F, 0.35F, 0.38F);
-            // faixa superior
             box(-0.32F, 0.86F,  0.36F,  0.32F, 0.90F,  0.37F, 0.18F, 0.18F, 0.20F);
-
-            // botão power
             box( 0.20F, 0.90F, 0.36F,  0.28F, 0.95F,  0.38F, 0.75F, 0.10F, 0.10F);
-            // LED de atividade
             box( 0.10F, 0.91F, 0.36F,  0.14F, 0.94F,  0.38F,
                  gab.estaLigado() ? 0.10F : 0.20F,
                  gab.estaLigado() ? 1.00F : 0.20F,
                  gab.estaLigado() ? 0.10F : 0.20F);
 
-            // slot RAM
             box(-0.30F, 0.55F, 0.20F, -0.10F, 0.75F, 0.30F,
                 gab.temRAM ? 0.15F : 0.08F,
                 gab.temRAM ? 0.85F : 0.08F,
                 gab.temRAM ? 0.20F : 0.08F);
 
-            // slot CPU
             box( 0.05F, 0.55F, 0.20F,  0.25F, 0.75F, 0.30F,
                 gab.temProcessador ? 0.80F : 0.08F,
                 gab.temProcessador ? 0.80F : 0.08F,
                 gab.temProcessador ? 0.85F : 0.08F);
 
-            // grade de ventilação
             for (int i = 0; i < 5; i++) {
                 float yy = 0.10F + i * 0.08F;
                 box(-0.28F, yy, 0.37F, 0.05F, yy + 0.03F, 0.38F, 0.10F, 0.10F, 0.10F);
@@ -317,16 +302,11 @@ public class PCMod {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             GL11.glDisable(GL11.GL_LIGHTING);
 
-            // base
             box(-0.18F, 0.00F, -0.10F,  0.18F, 0.05F,  0.10F, 0.12F, 0.12F, 0.12F);
-            // haste
             box(-0.05F, 0.05F, -0.05F,  0.05F, 0.38F,  0.05F, 0.12F, 0.12F, 0.12F);
-            // corpo traseiro
             box(-0.40F, 0.38F, -0.12F,  0.40F, 0.90F,  0.05F, 0.08F, 0.08F, 0.08F);
-            // moldura frontal
             box(-0.40F, 0.38F,  0.05F,  0.40F, 0.90F,  0.08F, 0.16F, 0.16F, 0.16F);
 
-            // tela
             if (mon.ligado) {
                 box(-0.35F, 0.42F, 0.08F, 0.35F, 0.86F, 0.09F, 0.10F, 0.45F, 0.85F);
                 box(-0.30F, 0.46F, 0.09F, 0.30F, 0.50F, 0.10F, 0.45F, 0.85F, 1.00F);
