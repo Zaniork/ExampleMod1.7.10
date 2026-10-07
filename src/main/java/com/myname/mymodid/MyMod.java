@@ -1,6 +1,8 @@
 package com.myname.mymodid;
 
 import cpw.mods.fml.client.registry.ClientRegistry;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.event.FMLInitializationEvent;
 import cpw.mods.fml.common.event.FMLPreInitializationEvent;
@@ -48,6 +50,8 @@ import org.lwjgl.opengl.GL12;
 public class MyMod {
 
     public static final String MODID = "mymodid";
+    public static final String MODNAME = "MyMod";
+    public static final Logger LOG = LogManager.getLogger(MODID);
 
     /** preenchido só no cliente (tira a foto) */
     public interface PhotoHandler {
