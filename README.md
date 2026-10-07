@@ -1,4 +1,4 @@
-# Example Forge Mod for Minecraft 1.7.10
+i# Example Forge Mod for Minecraft 1.7.10
 
 [![](https://jitpack.io/v/GTNewHorizons/ExampleMod1.7.10.svg)](https://jitpack.io/#GTNewHorizons/ExampleMod1.7.10)
 [![](https://github.com/GTNewHorizons/ExampleMod1.7.10/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/GTNewHorizons/ExampleMod1.7.10/actions/workflows/build-and-test.yml)
@@ -107,3 +107,4 @@ If you tried out this build script we would love to head your opinion! Is there 
 
 Happy modding,\
 [SinTh0r4s](https://github.com/SinTh0r4s), [TheElan](https://github.com/TheElan) and [basdxz](https://github.com/basdxz)
+.
