@@ -22,6 +22,7 @@ import net.minecraft.entity.item.EntityItem;
 import net.minecraftforge.client.IRenderHandler;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.entity.living.LivingSpawnEvent;
 import net.minecraftforge.event.terraingen.DecorateBiomeEvent;
 import net.minecraftforge.event.world.WorldEvent;
 
@@ -47,9 +48,12 @@ public class MyMod {
         FMLCommonHandler.instance().bus().register(new ItemCleaner());
         // sem grama alta, flores e arbustos secos
         MinecraftForge.TERRAIN_GEN_BUS.register(new NoGrass());
-        // só no cliente: sem céu/nuvens e mobs a 16 blocos
+        // menos mobs nascendo
+        MinecraftForge.EVENT_BUS.register(new SpawnLimiter());
+        // só no cliente
         if (event.getSide().isClient()) {
             MinecraftForge.EVENT_BUS.register(new ClientPerf());
+            FMLCommonHandler.instance().bus().register(new ClientSettings());
         }
     }
 
@@ -98,7 +102,17 @@ public class MyMod {
         }
     }
 
-    // ---------- cliente: sem céu/nuvens, mobs a 16 blocos ----------
+    // ---------- metade dos mobs naturais não nasce ----------
+    public static class SpawnLimiter {
+        @SubscribeEvent
+        public void onCheckSpawn(LivingSpawnEvent.CheckSpawn e) {
+            if (e.world.rand.nextInt(2) == 0) {
+                e.setResult(Event.Result.DENY);
+            }
+        }
+    }
+
+    // ---------- cliente: sem céu/nuvens/chuva, mobs a 16 blocos ----------
     public static class ClientPerf {
         private static final double MAX_DIST = 16.0;
 
@@ -112,6 +126,7 @@ public class MyMod {
             if (e.world.isRemote) {
                 e.world.provider.setSkyRenderer(new Empty());
                 e.world.provider.setCloudRenderer(new Empty());
+                e.world.provider.setWeatherRenderer(new Empty());
             }
         }
 
@@ -122,6 +137,18 @@ public class MyMod {
             if (e.entity.getDistanceSqToEntity(player) > MAX_DIST * MAX_DIST) {
                 e.setCanceled(true);
             }
+        }
+    }
+
+    // ---------- cliente: iluminação suave off e partículas mínimas ----------
+    public static class ClientSettings {
+        @SubscribeEvent
+        public void onClientTick(TickEvent.ClientTickEvent e) {
+            if (e.phase != TickEvent.Phase.END) return;
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.gameSettings == null) return;
+            if (mc.gameSettings.ambientOcclusion != 0) mc.gameSettings.ambientOcclusion = 0;
+            if (mc.gameSettings.particleSetting != 2) mc.gameSettings.particleSetting = 2;
         }
     }
 }
