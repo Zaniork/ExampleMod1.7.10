@@ -826,7 +826,7 @@ public class BrainrotMod {
             if (o == null) {
                 o = sb.addScoreObjective("brainrot", new ScoreDummyCriteria("dummy"));
                 o.setDisplayName("BRAINROT");
-                sb.setObjectiveInDisplaySlot(1, o);
+                sb.func_96530_a(1, o);
             }
             set(sb, o, "Dinheiro $", g.money);
             set(sb, o, "Renda por seg", inc);
@@ -837,7 +837,7 @@ public class BrainrotMod {
         }
 
         static void set(Scoreboard sb, ScoreObjective o, String n, int v) {
-            sb.getValueFromObjective(n, o).setScorePoints(v);
+            sb.func_96529_a(n, o).setScorePoints(v);
         }
 
         static void reset(World w, GameData g) {
@@ -848,7 +848,7 @@ public class BrainrotMod {
             for (Object o : new ArrayList(w.loadedEntityList)) {
                 if (o instanceof EntityBrainrot || o instanceof EntityBotPlayer) ((Entity) o).setDead();
             }
-            w.getScoreboard().setObjectiveInDisplaySlot(1, null);
+            w.getScoreboard().func_96530_a(1, null);
         }
     }
 
