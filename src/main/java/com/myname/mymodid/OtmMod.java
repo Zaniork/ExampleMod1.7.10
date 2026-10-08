@@ -48,10 +48,9 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
-import net.minecraftforge.event.entity.living.LivingSpawnEvent;
 import net.minecraftforge.event.world.WorldEvent;
 
-@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "2.1", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "2.2", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmMod {
 
     public static final String MODID = "otm";
@@ -64,7 +63,6 @@ public class OtmMod {
     static int cullDist       = 96;
     static int particleDist   = 48;
     static int tileDist       = 96;
-    static int nameTagDist    = 48;
     static int shadowDist     = 64;
     static int frameDist      = 96;
     static int paintingDist   = 96;
@@ -82,7 +80,6 @@ public class OtmMod {
 
     static int fpsLow = 25, fpsHigh = 70, minRender = 4;
 
-    // toggles
     static boolean adaptiveTick    = false;
     static boolean entityCull      = false;
     static boolean itemMerge       = false;
@@ -105,11 +102,9 @@ public class OtmMod {
     static boolean playerRenderCull = false;
     static boolean itemFrameCull    = false;
     static boolean paintingCull     = false;
-    static boolean entityNameTagCull = false;
-    static boolean entityShadowCull  = false;
+    static boolean entityShadowCull = false;
     static boolean metrics = true;
 
-    // metricas
     static volatile double msptAvg = 0;
     static volatile int fps = 0;
     static volatile int skippedPerSec = 0, culledPerSec = 0;
@@ -135,7 +130,7 @@ public class OtmMod {
             itemDespawnBoost=false; mobDespawnBoost=false; xpOrbCull=false;
             arrowCull=false; itemEntityCap=false; autosaveDisable=false;
             playerRenderCull=false; itemFrameCull=false; paintingCull=false;
-            entityNameTagCull=false; entityShadowCull=false;
+            entityShadowCull=false;
             return;
         }
 
@@ -146,11 +141,11 @@ public class OtmMod {
         itemDespawnBoost=true; mobDespawnBoost=true; xpOrbCull=true;
         arrowCull=true; itemEntityCap=true; autosaveDisable=true;
         playerRenderCull=true; itemFrameCull=true; paintingCull=true;
-        entityNameTagCull=true; entityShadowCull=true;
+        entityShadowCull=true;
 
         if (level == 1) {
             d2=64; d4=96; d8=128; d16=192; d32=256;
-            cullDist=96; particleDist=48; tileDist=96; nameTagDist=48;
+            cullDist=96; particleDist=48; tileDist=96;
             shadowDist=64; frameDist=96; paintingDist=96; playerCullDist=128;
             mobCapPerChunk=16; itemCapPerWorld=600; xpOrbCapPerWorld=300;
             particleCapFrame=6000; itemMergeDist=2; itemMergeAge=40;
@@ -158,7 +153,7 @@ public class OtmMod {
             fpsLow=25; fpsHigh=70; minRender=6;
         } else if (level == 2) {
             d2=32; d4=64; d8=96; d16=128; d32=192;
-            cullDist=64; particleDist=32; tileDist=64; nameTagDist=24;
+            cullDist=64; particleDist=32; tileDist=64;
             shadowDist=32; frameDist=48; paintingDist=48; playerCullDist=96;
             mobCapPerChunk=10; itemCapPerWorld=300; xpOrbCapPerWorld=150;
             particleCapFrame=2500; itemMergeDist=3; itemMergeAge=20;
@@ -166,7 +161,7 @@ public class OtmMod {
             fpsLow=30; fpsHigh=75; minRender=4;
         } else {
             d2=16; d4=32; d8=48; d16=64; d32=96;
-            cullDist=32; particleDist=12; tileDist=32; nameTagDist=12;
+            cullDist=32; particleDist=12; tileDist=32;
             shadowDist=16; frameDist=24; paintingDist=24; playerCullDist=48;
             mobCapPerChunk=4; itemCapPerWorld=120; xpOrbCapPerWorld=60;
             particleCapFrame=800; itemMergeDist=4; itemMergeAge=10;
@@ -412,15 +407,16 @@ public class OtmMod {
             return min;
         }
 
+        // MOB CAP via EntityJoinWorldEvent (compativel com 1.7.10)
         @SubscribeEvent
-        public void onMobSpawn(LivingSpawnEvent.CheckSpawn e) {
+        public void onMobJoinWorld(EntityJoinWorldEvent e) {
             if (level == 0 || !mobCap) return;
-            if (!(e.entityLiving instanceof IMob)) return;
-            World w = e.entityLiving.worldObj;
+            if (!(e.entity instanceof IMob)) return;
+            World w = e.world;
             if (w == null || w.isRemote) return;
 
-            int cx = MathHelper.floor_double(e.entityLiving.posX) >> 4;
-            int cz = MathHelper.floor_double(e.entityLiving.posZ) >> 4;
+            int cx = MathHelper.floor_double(e.entity.posX) >> 4;
+            int cz = MathHelper.floor_double(e.entity.posZ) >> 4;
             Chunk ch = w.getChunkFromChunkCoords(cx, cz);
             if (ch == null) return;
 
@@ -429,7 +425,7 @@ public class OtmMod {
                 for (Object o : list) if (o instanceof IMob) count++;
             }
             if (count >= mobCapPerChunk) {
-                e.setResult(LivingSpawnEvent.CheckSpawn.Result.DENY);
+                e.setCanceled(true);
                 mobsBlockedCount++;
             }
         }
@@ -518,7 +514,7 @@ public class OtmMod {
         private int origRender = -1;
         private boolean origFancy = true;
         private int origParticles = 0;
-        private int origClouds = 0;
+        private boolean origClouds = true;
         private boolean origAO = true;
         private int particlesThisFrame = 0;
 
@@ -539,15 +535,6 @@ public class OtmMod {
                 e.setCanceled(true);
                 culledCount++;
             }
-        }
-
-        @SubscribeEvent
-        public void onRenderLivingSpecial(RenderLivingEvent.Specials.Pre e) {
-            if (level == 0 || !entityNameTagCull) return;
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc == null || mc.thePlayer == null || e.entity == null) return;
-            double dSq = mc.thePlayer.getDistanceSqToEntity(e.entity);
-            if (dSq > (double) nameTagDist * nameTagDist) e.setCanceled(true);
         }
 
         @SubscribeEvent
@@ -625,8 +612,8 @@ public class OtmMod {
                 boolean changed = false;
                 if (mc.gameSettings.fancyGraphics) {
                     mc.gameSettings.fancyGraphics = false; changed = true;
-                } else if (mc.gameSettings.clouds > 0) {
-                    mc.gameSettings.clouds = 0; changed = true;
+                } else if (mc.gameSettings.clouds) {
+                    mc.gameSettings.clouds = false; changed = true;
                 } else if (mc.gameSettings.particleSetting < 2) {
                     mc.gameSettings.particleSetting++; changed = true;
                 } else if (mc.gameSettings.renderDistanceChunks > minRender) {
@@ -647,8 +634,8 @@ public class OtmMod {
                     mc.gameSettings.renderDistanceChunks++; changed = true;
                 } else if (mc.gameSettings.particleSetting > origParticles) {
                     mc.gameSettings.particleSetting--; changed = true;
-                } else if (origClouds > 0 && mc.gameSettings.clouds == 0) {
-                    mc.gameSettings.clouds = origClouds; changed = true;
+                } else if (origClouds && !mc.gameSettings.clouds) {
+                    mc.gameSettings.clouds = true; changed = true;
                 } else if (origFancy && !mc.gameSettings.fancyGraphics) {
                     mc.gameSettings.fancyGraphics = true; changed = true;
                 }
