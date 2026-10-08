@@ -54,6 +54,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.potion.Potion;
 import net.minecraft.potion.PotionEffect;
 import net.minecraft.scoreboard.IScoreObjectiveCriteria;
+import net.minecraft.scoreboard.ScoreDummyCriteria;
 import net.minecraft.scoreboard.ScoreObjective;
 import net.minecraft.scoreboard.Scoreboard;
 import net.minecraft.util.ChatComponentText;
@@ -823,9 +824,9 @@ public class BrainrotMod {
             Scoreboard sb = w.getScoreboard();
             ScoreObjective o = sb.getObjective("brainrot");
             if (o == null) {
-                o = sb.addScoreObjective("brainrot", IScoreObjectiveCriteria.field_96641_b);
+                o = sb.addScoreObjective("brainrot", new ScoreDummyCriteria("dummy"));
                 o.setDisplayName("BRAINROT");
-                sb.func_96530_a(1, o);
+                sb.setObjectiveInDisplaySlot(1, o);
             }
             set(sb, o, "Dinheiro $", g.money);
             set(sb, o, "Renda por seg", inc);
@@ -836,7 +837,7 @@ public class BrainrotMod {
         }
 
         static void set(Scoreboard sb, ScoreObjective o, String n, int v) {
-            sb.func_96529_a(n, o).func_96647_c(v);
+            sb.getValueFromObjective(n, o).setScorePoints(v);
         }
 
         static void reset(World w, GameData g) {
@@ -847,7 +848,7 @@ public class BrainrotMod {
             for (Object o : new ArrayList(w.loadedEntityList)) {
                 if (o instanceof EntityBrainrot || o instanceof EntityBotPlayer) ((Entity) o).setDead();
             }
-            w.getScoreboard().func_96530_a(1, null);
+            w.getScoreboard().setObjectiveInDisplaySlot(1, null);
         }
     }
 
