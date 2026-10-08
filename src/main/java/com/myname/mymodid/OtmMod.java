@@ -27,14 +27,9 @@ import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.projectile.EntityArrow;
 import net.minecraft.item.ItemStack;
-import net.minecraft.tileentity.TileEntity;
-import net.minecraft.tileentity.TileEntityFurnace;
-import net.minecraft.tileentity.TileEntityHopper;
-import net.minecraft.tileentity.TileEntityMobSpawner;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
-import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderPlayerEvent;
@@ -42,7 +37,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.living.LivingEvent;
 
-@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "3.1", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "3.2", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmMod {
 
     public static final String MODID = "otm";
@@ -53,7 +48,6 @@ public class OtmMod {
     static int d2 = 64, d4 = 96, d8 = 128, d16 = 192, d32 = 256;
 
     static int cullDist       = 96;
-    static int tileDist       = 96;
     static int playerCullDist = 128;
 
     static int mobCapPerChunk   = 16;
@@ -73,10 +67,6 @@ public class OtmMod {
     static boolean xpMerge          = false;
     static boolean mobCap           = false;
     static boolean adaptiveClient   = false;
-    static boolean tileThrottle     = false;
-    static boolean spawnerThrottle  = false;
-    static boolean hopperThrottle   = false;
-    static boolean furnaceThrottle  = false;
     static boolean pathThrottle     = false;
     static boolean aiTargetCull     = false;
     static boolean itemDespawnBoost = false;
@@ -90,11 +80,11 @@ public class OtmMod {
     static volatile double msptAvg = 0;
     static volatile int fps = 0;
     static volatile int skippedPerSec = 0, culledPerSec = 0;
-    static volatile int tilesPaused = 0, itemsMerged = 0, xpMerged = 0;
+    static volatile int itemsMerged = 0, xpMerged = 0;
     static volatile int mobsBlocked = 0;
     static volatile int itemsCapped = 0, pathsCleared = 0;
 
-    static int skippedCount = 0, culledCount = 0, tilePausedCount = 0;
+    static int skippedCount = 0, culledCount = 0;
     static int itemsMergedCount = 0, xpMergedCount = 0, mobsBlockedCount = 0;
     static int itemsCappedCount = 0, pathsClearedCount = 0;
 
@@ -106,8 +96,7 @@ public class OtmMod {
         if (level == 0) {
             adaptiveTick=false; entityCull=false; itemMerge=false; xpMerge=false;
             mobCap=false; adaptiveClient=false;
-            tileThrottle=false; spawnerThrottle=false; hopperThrottle=false;
-            furnaceThrottle=false; pathThrottle=false; aiTargetCull=false;
+            pathThrottle=false; aiTargetCull=false;
             itemDespawnBoost=false; mobDespawnBoost=false; xpOrbCull=false;
             arrowCull=false; itemEntityCap=false;
             playerRenderCull=false;
@@ -116,29 +105,28 @@ public class OtmMod {
 
         adaptiveTick=true; entityCull=true; itemMerge=true; xpMerge=true;
         mobCap=true; adaptiveClient=true;
-        tileThrottle=true; spawnerThrottle=true; hopperThrottle=true;
-        furnaceThrottle=true; pathThrottle=true; aiTargetCull=true;
+        pathThrottle=true; aiTargetCull=true;
         itemDespawnBoost=true; mobDespawnBoost=true; xpOrbCull=true;
         arrowCull=true; itemEntityCap=true;
         playerRenderCull=true;
 
         if (level == 1) {
             d2=64; d4=96; d8=128; d16=192; d32=256;
-            cullDist=96; tileDist=96; playerCullDist=128;
+            cullDist=96; playerCullDist=128;
             mobCapPerChunk=16; itemCapPerWorld=600; xpOrbCapPerWorld=300;
             itemMergeDist=2; itemMergeAge=40;
             itemDespawnAge=6000; mobDespawnDist=128; arrowDespawnAge=1200;
             fpsLow=25; fpsHigh=70; minRender=6;
         } else if (level == 2) {
             d2=32; d4=64; d8=96; d16=128; d32=192;
-            cullDist=64; tileDist=64; playerCullDist=96;
+            cullDist=64; playerCullDist=96;
             mobCapPerChunk=10; itemCapPerWorld=300; xpOrbCapPerWorld=150;
             itemMergeDist=3; itemMergeAge=20;
             itemDespawnAge=3600; mobDespawnDist=96; arrowDespawnAge=800;
             fpsLow=30; fpsHigh=75; minRender=4;
         } else {
             d2=16; d4=32; d8=48; d16=64; d32=96;
-            cullDist=32; tileDist=32; playerCullDist=48;
+            cullDist=32; playerCullDist=48;
             mobCapPerChunk=4; itemCapPerWorld=120; xpOrbCapPerWorld=60;
             itemMergeDist=4; itemMergeAge=10;
             itemDespawnAge=1800; mobDespawnDist=64; arrowDespawnAge=400;
@@ -176,9 +164,6 @@ public class OtmMod {
     // ================== SERVER ==================
     public static class CommonEvents {
 
-        // usa lista plana em vez de Map<World,...> pra evitar problemas de tipo
-        private final List<TileEntity> pausedTEs = new ArrayList<TileEntity>();
-
         private long tickStart = 0;
         private int tickCounter = 0;
 
@@ -193,7 +178,6 @@ public class OtmMod {
                     tickCounter = 0;
                     skippedPerSec=skippedCount; skippedCount=0;
                     culledPerSec=culledCount;   culledCount=0;
-                    tilesPaused=tilePausedCount; tilePausedCount=0;
                     itemsMerged=itemsMergedCount; itemsMergedCount=0;
                     xpMerged=xpMergedCount; xpMergedCount=0;
                     mobsBlocked=mobsBlockedCount; mobsBlockedCount=0;
@@ -216,7 +200,6 @@ public class OtmMod {
             if (en instanceof EntityLiving) {
                 EntityLiving el = (EntityLiving) en;
                 if (el.getAttackTarget() != null) return;
-                if (el.getLeashed()) return;
 
                 if (aiTargetCull) {
                     double d = nearestPlayerSq(en);
@@ -258,76 +241,9 @@ public class OtmMod {
                 if (itemMerge) doMergeItems(w);
                 if (xpMerge)   doMergeXP(w);
             }
-            if (tileThrottle && now % 40L == 0L) doTileThrottle(w);
             if ((itemDespawnBoost || mobDespawnBoost || xpOrbCull || arrowCull) && now % 40L == 0L)
                 doEntityHousekeeping(w);
             if (itemEntityCap && now % 60L == 0L) doEntityCaps(w);
-        }
-
-        @SuppressWarnings("unchecked")
-        private void doTileThrottle(World w) {
-            List players = w.playerEntities;
-            if (players == null || players.isEmpty()) return;
-
-            // forca cast pra List<TileEntity> independente do tipo exato do campo
-            List<TileEntity> tick;
-            try {
-                tick = (List<TileEntity>) w.tickableTileEntities;
-            } catch (Throwable t) { return; }
-            if (tick == null) return;
-
-            List<TileEntity> toPause = new ArrayList<TileEntity>();
-
-            for (int i = tick.size() - 1; i >= 0; i--) {
-                TileEntity te;
-                try { te = tick.get(i); } catch (Throwable t) { continue; }
-                if (te == null) continue;
-
-                boolean specialized = false;
-                if (spawnerThrottle && te instanceof TileEntityMobSpawner) specialized = true;
-                else if (hopperThrottle && te instanceof TileEntityHopper) specialized = true;
-                else if (furnaceThrottle && te instanceof TileEntityFurnace) specialized = true;
-
-                double dSq = nearestPlayerSqTE(players, te);
-                if (dSq > (double) tileDist * tileDist) {
-                    if (specialized || tileThrottle) {
-                        tick.remove(i);
-                        toPause.add(te);
-                        tilePausedCount++;
-                    }
-                }
-            }
-
-            pausedTEs.addAll(toPause);
-
-            // retoma TEs que voltaram pra perto
-            for (int i = pausedTEs.size() - 1; i >= 0; i--) {
-                TileEntity te = pausedTEs.get(i);
-                if (te == null) { pausedTEs.remove(i); continue; }
-                try {
-                    if (te.isInvalid()) { pausedTEs.remove(i); continue; }
-                } catch (Throwable t) { /* ignora */ }
-                double dSq = nearestPlayerSqTE(players, te);
-                if (dSq <= (double) tileDist * tileDist) {
-                    tick.add(te);
-                    pausedTEs.remove(i);
-                }
-            }
-        }
-
-        private double nearestPlayerSqTE(List players, TileEntity te) {
-            double min = Double.MAX_VALUE;
-            for (int i = 0; i < players.size(); i++) {
-                Object o = players.get(i);
-                if (!(o instanceof EntityPlayer)) continue;
-                EntityPlayer p = (EntityPlayer) o;
-                double dx = p.posX - (te.xCoord + 0.5);
-                double dy = p.posY - (te.yCoord + 0.5);
-                double dz = p.posZ - (te.zCoord + 0.5);
-                double d = dx * dx + dy * dy + dz * dz;
-                if (d < min) min = d;
-            }
-            return min;
         }
 
         private void doEntityHousekeeping(World w) {
@@ -437,13 +353,13 @@ public class OtmMod {
             if (XP_FIELD_CHECKED) return XP_VALUE_FIELD;
             XP_FIELD_CHECKED = true;
             String[] names = new String[] { "xpValue", "field_70532_e" };
-            for (String n : names) {
+            for (int i = 0; i < names.length; i++) {
                 try {
-                    Field f = EntityXPOrb.class.getDeclaredField(n);
+                    Field f = EntityXPOrb.class.getDeclaredField(names[i]);
                     f.setAccessible(true);
                     XP_VALUE_FIELD = f;
                     return f;
-                } catch (Throwable t) { /* tenta o proximo */ }
+                } catch (Throwable t) { }
             }
             return null;
         }
@@ -595,7 +511,6 @@ public class OtmMod {
             if (level > 0) {
                 e.left.add("\u00A7b[OTM]\u00A7r skip " + skippedPerSec
                     + " | cull " + culledPerSec
-                    + " | TE " + tilesPaused
                     + " | itens " + itemsMerged
                     + " | xp " + xpMerged
                     + " | mobs " + mobsBlocked);
@@ -609,7 +524,7 @@ public class OtmMod {
     public static class CmdOtm extends CommandBase {
         @Override public String getCommandName() { return "otm"; }
         @Override public String getCommandUsage(ICommandSender s) {
-            return "/otm <0|1|2|3>  -  0=off, 1=leve, 2=medio, 3=agressivo";
+            return "/otm <0|1|2|3>";
         }
         @Override public int getRequiredPermissionLevel() { return 0; }
         @Override public boolean canCommandSenderUseCommand(ICommandSender s) { return true; }
@@ -640,7 +555,6 @@ public class OtmMod {
                 s.addChatMessage(new ChatComponentText("\u00A7bOTM\u00A7r nivel \u00A7e" + level + " (" + nome + ")\u00A7r aplicado."));
                 s.addChatMessage(new ChatComponentText(
                     "\u00A7bOTM\u00A7r cull=" + cullDist
-                    + " | TE=" + tileDist
                     + " | mobs/chunk=" + mobCapPerChunk
                     + " | fps=" + fpsLow + "-" + fpsHigh));
             }
