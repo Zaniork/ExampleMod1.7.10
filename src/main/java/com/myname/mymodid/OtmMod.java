@@ -2,10 +2,7 @@ package com.myname.mymodid;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.WeakHashMap;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.Mod;
@@ -25,8 +22,6 @@ import net.minecraft.entity.EntityLiving;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.boss.IBossDisplayData;
 import net.minecraft.entity.item.EntityItem;
-import net.minecraft.entity.item.EntityItemFrame;
-import net.minecraft.entity.item.EntityPainting;
 import net.minecraft.entity.item.EntityXPOrb;
 import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.player.EntityPlayer;
@@ -45,10 +40,9 @@ import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderPlayerEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.Configuration;
-import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
 
-@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "2.3", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "3.1", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmMod {
 
     public static final String MODID = "otm";
@@ -59,17 +53,12 @@ public class OtmMod {
     static int d2 = 64, d4 = 96, d8 = 128, d16 = 192, d32 = 256;
 
     static int cullDist       = 96;
-    static int particleDist   = 48;
     static int tileDist       = 96;
-    static int shadowDist     = 64;
-    static int frameDist      = 96;
-    static int paintingDist   = 96;
     static int playerCullDist = 128;
 
     static int mobCapPerChunk   = 16;
     static int itemCapPerWorld  = 600;
     static int xpOrbCapPerWorld = 300;
-    static int particleCapFrame = 6000;
     static int itemMergeDist    = 2;
     static int itemMergeAge     = 40;
     static int itemDespawnAge   = 6000;
@@ -78,39 +67,35 @@ public class OtmMod {
 
     static int fpsLow = 25, fpsHigh = 70, minRender = 4;
 
-    static boolean adaptiveTick    = false;
-    static boolean entityCull      = false;
-    static boolean itemMerge       = false;
-    static boolean xpMerge         = false;
-    static boolean mobCap          = false;
-    static boolean particleLimit   = false;
-    static boolean adaptiveClient  = false;
-    static boolean tileThrottle    = false;
-    static boolean spawnerThrottle = false;
-    static boolean hopperThrottle  = false;
-    static boolean furnaceThrottle = false;
-    static boolean pathThrottle    = false;
-    static boolean aiTargetCull    = false;
+    static boolean adaptiveTick     = false;
+    static boolean entityCull       = false;
+    static boolean itemMerge        = false;
+    static boolean xpMerge          = false;
+    static boolean mobCap           = false;
+    static boolean adaptiveClient   = false;
+    static boolean tileThrottle     = false;
+    static boolean spawnerThrottle  = false;
+    static boolean hopperThrottle   = false;
+    static boolean furnaceThrottle  = false;
+    static boolean pathThrottle     = false;
+    static boolean aiTargetCull     = false;
     static boolean itemDespawnBoost = false;
-    static boolean mobDespawnBoost = false;
-    static boolean xpOrbCull       = false;
-    static boolean arrowCull       = false;
-    static boolean itemEntityCap   = false;
+    static boolean mobDespawnBoost  = false;
+    static boolean xpOrbCull        = false;
+    static boolean arrowCull        = false;
+    static boolean itemEntityCap    = false;
     static boolean playerRenderCull = false;
-    static boolean itemFrameCull    = false;
-    static boolean paintingCull     = false;
     static boolean metrics = true;
 
     static volatile double msptAvg = 0;
     static volatile int fps = 0;
     static volatile int skippedPerSec = 0, culledPerSec = 0;
     static volatile int tilesPaused = 0, itemsMerged = 0, xpMerged = 0;
-    static volatile int mobsBlocked = 0, particlesBlocked = 0;
+    static volatile int mobsBlocked = 0;
     static volatile int itemsCapped = 0, pathsCleared = 0;
 
     static int skippedCount = 0, culledCount = 0, tilePausedCount = 0;
     static int itemsMergedCount = 0, xpMergedCount = 0, mobsBlockedCount = 0;
-    static int particlesBlockedCount = 0;
     static int itemsCappedCount = 0, pathsClearedCount = 0;
 
     public OtmMod() { instance = this; }
@@ -120,45 +105,42 @@ public class OtmMod {
 
         if (level == 0) {
             adaptiveTick=false; entityCull=false; itemMerge=false; xpMerge=false;
-            mobCap=false; particleLimit=false; adaptiveClient=false;
+            mobCap=false; adaptiveClient=false;
             tileThrottle=false; spawnerThrottle=false; hopperThrottle=false;
             furnaceThrottle=false; pathThrottle=false; aiTargetCull=false;
             itemDespawnBoost=false; mobDespawnBoost=false; xpOrbCull=false;
             arrowCull=false; itemEntityCap=false;
-            playerRenderCull=false; itemFrameCull=false; paintingCull=false;
+            playerRenderCull=false;
             return;
         }
 
         adaptiveTick=true; entityCull=true; itemMerge=true; xpMerge=true;
-        mobCap=true; particleLimit=true; adaptiveClient=true;
+        mobCap=true; adaptiveClient=true;
         tileThrottle=true; spawnerThrottle=true; hopperThrottle=true;
         furnaceThrottle=true; pathThrottle=true; aiTargetCull=true;
         itemDespawnBoost=true; mobDespawnBoost=true; xpOrbCull=true;
         arrowCull=true; itemEntityCap=true;
-        playerRenderCull=true; itemFrameCull=true; paintingCull=true;
+        playerRenderCull=true;
 
         if (level == 1) {
             d2=64; d4=96; d8=128; d16=192; d32=256;
-            cullDist=96; particleDist=48; tileDist=96;
-            shadowDist=64; frameDist=96; paintingDist=96; playerCullDist=128;
+            cullDist=96; tileDist=96; playerCullDist=128;
             mobCapPerChunk=16; itemCapPerWorld=600; xpOrbCapPerWorld=300;
-            particleCapFrame=6000; itemMergeDist=2; itemMergeAge=40;
+            itemMergeDist=2; itemMergeAge=40;
             itemDespawnAge=6000; mobDespawnDist=128; arrowDespawnAge=1200;
             fpsLow=25; fpsHigh=70; minRender=6;
         } else if (level == 2) {
             d2=32; d4=64; d8=96; d16=128; d32=192;
-            cullDist=64; particleDist=32; tileDist=64;
-            shadowDist=32; frameDist=48; paintingDist=48; playerCullDist=96;
+            cullDist=64; tileDist=64; playerCullDist=96;
             mobCapPerChunk=10; itemCapPerWorld=300; xpOrbCapPerWorld=150;
-            particleCapFrame=2500; itemMergeDist=3; itemMergeAge=20;
+            itemMergeDist=3; itemMergeAge=20;
             itemDespawnAge=3600; mobDespawnDist=96; arrowDespawnAge=800;
             fpsLow=30; fpsHigh=75; minRender=4;
         } else {
             d2=16; d4=32; d8=48; d16=64; d32=96;
-            cullDist=32; particleDist=12; tileDist=32;
-            shadowDist=16; frameDist=24; paintingDist=24; playerCullDist=48;
+            cullDist=32; tileDist=32; playerCullDist=48;
             mobCapPerChunk=4; itemCapPerWorld=120; xpOrbCapPerWorld=60;
-            particleCapFrame=800; itemMergeDist=4; itemMergeAge=10;
+            itemMergeDist=4; itemMergeAge=10;
             itemDespawnAge=1800; mobDespawnDist=64; arrowDespawnAge=400;
             fpsLow=45; fpsHigh=90; minRender=2;
         }
@@ -194,7 +176,9 @@ public class OtmMod {
     // ================== SERVER ==================
     public static class CommonEvents {
 
-        private final Map<World, List<TileEntity>> pausedTEs = new WeakHashMap<World, List<TileEntity>>();
+        // usa lista plana em vez de Map<World,...> pra evitar problemas de tipo
+        private final List<TileEntity> pausedTEs = new ArrayList<TileEntity>();
+
         private long tickStart = 0;
         private int tickCounter = 0;
 
@@ -213,7 +197,6 @@ public class OtmMod {
                     itemsMerged=itemsMergedCount; itemsMergedCount=0;
                     xpMerged=xpMergedCount; xpMergedCount=0;
                     mobsBlocked=mobsBlockedCount; mobsBlockedCount=0;
-                    particlesBlocked=particlesBlockedCount; particlesBlockedCount=0;
                     itemsCapped=itemsCappedCount; itemsCappedCount=0;
                     pathsCleared=pathsClearedCount; pathsClearedCount=0;
                 }
@@ -281,18 +264,24 @@ public class OtmMod {
             if (itemEntityCap && now % 60L == 0L) doEntityCaps(w);
         }
 
+        @SuppressWarnings("unchecked")
         private void doTileThrottle(World w) {
-            List<TileEntity> paused = pausedTEs.get(w);
-            if (paused == null) { paused = new ArrayList<TileEntity>(); pausedTEs.put(w, paused); }
-
             List players = w.playerEntities;
             if (players == null || players.isEmpty()) return;
 
-            List<TileEntity> tick = w.tickableTileEntities;
-            Iterator<TileEntity> it = tick.iterator();
-            while (it.hasNext()) {
-                TileEntity te = it.next();
-                if (te == null || te.isInvalid()) continue;
+            // forca cast pra List<TileEntity> independente do tipo exato do campo
+            List<TileEntity> tick;
+            try {
+                tick = (List<TileEntity>) w.tickableTileEntities;
+            } catch (Throwable t) { return; }
+            if (tick == null) return;
+
+            List<TileEntity> toPause = new ArrayList<TileEntity>();
+
+            for (int i = tick.size() - 1; i >= 0; i--) {
+                TileEntity te;
+                try { te = tick.get(i); } catch (Throwable t) { continue; }
+                if (te == null) continue;
 
                 boolean specialized = false;
                 if (spawnerThrottle && te instanceof TileEntityMobSpawner) specialized = true;
@@ -302,21 +291,26 @@ public class OtmMod {
                 double dSq = nearestPlayerSqTE(players, te);
                 if (dSq > (double) tileDist * tileDist) {
                     if (specialized || tileThrottle) {
-                        it.remove();
-                        paused.add(te);
+                        tick.remove(i);
+                        toPause.add(te);
                         tilePausedCount++;
                     }
                 }
             }
 
-            Iterator<TileEntity> itp = paused.iterator();
-            while (itp.hasNext()) {
-                TileEntity te = itp.next();
-                if (te == null || te.isInvalid()) { itp.remove(); continue; }
+            pausedTEs.addAll(toPause);
+
+            // retoma TEs que voltaram pra perto
+            for (int i = pausedTEs.size() - 1; i >= 0; i--) {
+                TileEntity te = pausedTEs.get(i);
+                if (te == null) { pausedTEs.remove(i); continue; }
+                try {
+                    if (te.isInvalid()) { pausedTEs.remove(i); continue; }
+                } catch (Throwable t) { /* ignora */ }
                 double dSq = nearestPlayerSqTE(players, te);
                 if (dSq <= (double) tileDist * tileDist) {
                     tick.add(te);
-                    itp.remove();
+                    pausedTEs.remove(i);
                 }
             }
         }
@@ -324,7 +318,9 @@ public class OtmMod {
         private double nearestPlayerSqTE(List players, TileEntity te) {
             double min = Double.MAX_VALUE;
             for (int i = 0; i < players.size(); i++) {
-                EntityPlayer p = (EntityPlayer) players.get(i);
+                Object o = players.get(i);
+                if (!(o instanceof EntityPlayer)) continue;
+                EntityPlayer p = (EntityPlayer) o;
                 double dx = p.posX - (te.xCoord + 0.5);
                 double dy = p.posY - (te.yCoord + 0.5);
                 double dz = p.posZ - (te.zCoord + 0.5);
@@ -395,32 +391,12 @@ public class OtmMod {
             if (players == null || players.isEmpty()) return Double.MAX_VALUE;
             double min = Double.MAX_VALUE;
             for (int i = 0; i < players.size(); i++) {
-                double d = en.getDistanceSqToEntity((EntityPlayer) players.get(i));
+                Object o = players.get(i);
+                if (!(o instanceof EntityPlayer)) continue;
+                double d = en.getDistanceSqToEntity((EntityPlayer) o);
                 if (d < min) min = d;
             }
             return min;
-        }
-
-        @SubscribeEvent
-        public void onMobJoinWorld(EntityJoinWorldEvent e) {
-            if (level == 0 || !mobCap) return;
-            if (!(e.entity instanceof IMob)) return;
-            World w = e.world;
-            if (w == null || w.isRemote) return;
-
-            int cx = MathHelper.floor_double(e.entity.posX) >> 4;
-            int cz = MathHelper.floor_double(e.entity.posZ) >> 4;
-            Chunk ch = w.getChunkFromChunkCoords(cx, cz);
-            if (ch == null) return;
-
-            int count = 0;
-            for (List list : ch.entityLists) {
-                for (Object o : list) if (o instanceof IMob) count++;
-            }
-            if (count >= mobCapPerChunk) {
-                e.setCanceled(true);
-                mobsBlockedCount++;
-            }
         }
 
         private void doMergeItems(World w) {
@@ -454,16 +430,30 @@ public class OtmMod {
             }
         }
 
-        private static Field XP_VALUE_FIELD;
+        private static Field XP_VALUE_FIELD = null;
+        private static boolean XP_FIELD_CHECKED = false;
+
+        private static Field findXpField() {
+            if (XP_FIELD_CHECKED) return XP_VALUE_FIELD;
+            XP_FIELD_CHECKED = true;
+            String[] names = new String[] { "xpValue", "field_70532_e" };
+            for (String n : names) {
+                try {
+                    Field f = EntityXPOrb.class.getDeclaredField(n);
+                    f.setAccessible(true);
+                    XP_VALUE_FIELD = f;
+                    return f;
+                } catch (Throwable t) { /* tenta o proximo */ }
+            }
+            return null;
+        }
+
         private void doMergeXP(World w) {
+            Field f = findXpField();
+            if (f == null) return;
+
             List items = w.loadedEntityList;
             if (items == null || items.isEmpty()) return;
-            if (XP_VALUE_FIELD == null) {
-                try {
-                    XP_VALUE_FIELD = EntityXPOrb.class.getDeclaredField("xpValue");
-                    XP_VALUE_FIELD.setAccessible(true);
-                } catch (Throwable t) { return; }
-            }
             int n = items.size();
             for (int i = 0; i < n; i++) {
                 Object o1 = items.get(i);
@@ -477,9 +467,9 @@ public class OtmMod {
                     if (b.isDead) continue;
                     if (a.getDistanceSqToEntity(b) > 4.0) continue;
                     try {
-                        int va = XP_VALUE_FIELD.getInt(a);
-                        int vb = XP_VALUE_FIELD.getInt(b);
-                        XP_VALUE_FIELD.setInt(a, va + vb);
+                        int va = f.getInt(a);
+                        int vb = f.getInt(b);
+                        f.setInt(a, va + vb);
                         b.setDead();
                         xpMergedCount++;
                     } catch (Throwable ignored) {}
@@ -496,16 +486,16 @@ public class OtmMod {
         private long lastFps = 0;
         private long lastAdjust = 0;
         private int lowSeconds = 0;
+
         private int origRender = -1;
         private boolean origFancy = true;
         private int origParticles = 0;
-        private int origClouds = 0;
-        private boolean origAO = true;
-        private int particlesThisFrame = 0;
+        private boolean origClouds = true;
+        private int origAO = 2;
 
         @SubscribeEvent(priority = EventPriority.LOWEST)
         public void onRenderLiving(RenderLivingEvent.Pre e) {
-            if (level == 0) return;
+            if (level == 0 || !entityCull) return;
             if (e.entity == null) return;
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null || mc.thePlayer == null) return;
@@ -513,10 +503,7 @@ public class OtmMod {
             if (e.entity instanceof IBossDisplayData) return;
 
             double dSq = mc.thePlayer.getDistanceSqToEntity(e.entity);
-            if (entityCull && dSq > (double) cullDist * cullDist) {
-                e.setCanceled(true);
-                culledCount++;
-            } else if (dSq > (double) shadowDist * shadowDist) {
+            if (dSq > (double) cullDist * cullDist) {
                 e.setCanceled(true);
                 culledCount++;
             }
@@ -533,44 +520,8 @@ public class OtmMod {
         }
 
         @SubscribeEvent
-        public void onEntityJoin(EntityJoinWorldEvent e) {
-            if (level == 0) return;
-            if (e.world == null || !e.world.isRemote) return;
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc == null || mc.thePlayer == null || e.entity == null) return;
-
-            double dSq = mc.thePlayer.getDistanceSqToEntity(e.entity);
-
-            if (itemFrameCull && e.entity instanceof EntityItemFrame) {
-                if (dSq > (double) frameDist * frameDist) e.setCanceled(true);
-                return;
-            }
-            if (paintingCull && e.entity instanceof EntityPainting) {
-                if (dSq > (double) paintingDist * paintingDist) e.setCanceled(true);
-                return;
-            }
-            if (particleLimit) {
-                String cls = e.entity.getClass().getName();
-                if (cls.startsWith("net.minecraft.client.particle")) {
-                    if (dSq > (double) particleDist * particleDist) {
-                        e.setCanceled(true);
-                        particlesBlockedCount++;
-                    } else {
-                        particlesThisFrame++;
-                        int perFrameCap = particleCapFrame / 60;
-                        if (particlesThisFrame > perFrameCap) {
-                            e.setCanceled(true);
-                            particlesBlockedCount++;
-                        }
-                    }
-                }
-            }
-        }
-
-        @SubscribeEvent
         public void onRenderTick(TickEvent.RenderTickEvent e) {
             if (e.phase != TickEvent.Phase.END) return;
-            particlesThisFrame = 0;
             frames++;
             long now = System.currentTimeMillis();
             if (now - lastFps >= 1000) {
@@ -597,14 +548,14 @@ public class OtmMod {
                 boolean changed = false;
                 if (mc.gameSettings.fancyGraphics) {
                     mc.gameSettings.fancyGraphics = false; changed = true;
-                } else if (mc.gameSettings.clouds > 0) {
-                    mc.gameSettings.clouds = 0; changed = true;
+                } else if (mc.gameSettings.clouds) {
+                    mc.gameSettings.clouds = false; changed = true;
                 } else if (mc.gameSettings.particleSetting < 2) {
                     mc.gameSettings.particleSetting++; changed = true;
                 } else if (mc.gameSettings.renderDistanceChunks > minRender) {
                     mc.gameSettings.renderDistanceChunks--; changed = true;
-                } else if (mc.gameSettings.ambientOcclusion) {
-                    mc.gameSettings.ambientOcclusion = false; changed = true;
+                } else if (mc.gameSettings.ambientOcclusion > 0) {
+                    mc.gameSettings.ambientOcclusion = 0; changed = true;
                 }
                 if (changed) {
                     mc.renderGlobal.loadRenderers();
@@ -613,15 +564,15 @@ public class OtmMod {
                 }
             } else if (fps > fpsHigh && now - lastAdjust > 30000) {
                 boolean changed = false;
-                if (origAO && !mc.gameSettings.ambientOcclusion) {
-                    mc.gameSettings.ambientOcclusion = true; changed = true;
+                if (mc.gameSettings.ambientOcclusion == 0 && origAO > 0) {
+                    mc.gameSettings.ambientOcclusion = origAO; changed = true;
                 } else if (mc.gameSettings.renderDistanceChunks < origRender) {
                     mc.gameSettings.renderDistanceChunks++; changed = true;
                 } else if (mc.gameSettings.particleSetting > origParticles) {
                     mc.gameSettings.particleSetting--; changed = true;
-                } else if (origClouds > 0 && mc.gameSettings.clouds == 0) {
-                    mc.gameSettings.clouds = origClouds; changed = true;
-                } else if (origFancy && !mc.gameSettings.fancyGraphics) {
+                } else if (!mc.gameSettings.clouds && origClouds) {
+                    mc.gameSettings.clouds = true; changed = true;
+                } else if (!mc.gameSettings.fancyGraphics && origFancy) {
                     mc.gameSettings.fancyGraphics = true; changed = true;
                 }
                 if (changed) {
@@ -648,8 +599,7 @@ public class OtmMod {
                     + " | itens " + itemsMerged
                     + " | xp " + xpMerged
                     + " | mobs " + mobsBlocked);
-                e.left.add("\u00A7b[OTM]\u00A7r part " + particlesBlocked
-                    + " | cap " + itemsCapped
+                e.left.add("\u00A7b[OTM]\u00A7r cap " + itemsCapped
                     + " | path " + pathsCleared);
             }
         }
