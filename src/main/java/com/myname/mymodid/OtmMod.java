@@ -39,7 +39,6 @@ import net.minecraft.tileentity.TileEntityMobSpawner;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
-import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
@@ -48,9 +47,8 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
-import net.minecraftforge.event.world.WorldEvent;
 
-@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "2.2", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "2.3", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmMod {
 
     public static final String MODID = "otm";
@@ -98,11 +96,9 @@ public class OtmMod {
     static boolean xpOrbCull       = false;
     static boolean arrowCull       = false;
     static boolean itemEntityCap   = false;
-    static boolean autosaveDisable = false;
     static boolean playerRenderCull = false;
     static boolean itemFrameCull    = false;
     static boolean paintingCull     = false;
-    static boolean entityShadowCull = false;
     static boolean metrics = true;
 
     static volatile double msptAvg = 0;
@@ -128,9 +124,8 @@ public class OtmMod {
             tileThrottle=false; spawnerThrottle=false; hopperThrottle=false;
             furnaceThrottle=false; pathThrottle=false; aiTargetCull=false;
             itemDespawnBoost=false; mobDespawnBoost=false; xpOrbCull=false;
-            arrowCull=false; itemEntityCap=false; autosaveDisable=false;
+            arrowCull=false; itemEntityCap=false;
             playerRenderCull=false; itemFrameCull=false; paintingCull=false;
-            entityShadowCull=false;
             return;
         }
 
@@ -139,9 +134,8 @@ public class OtmMod {
         tileThrottle=true; spawnerThrottle=true; hopperThrottle=true;
         furnaceThrottle=true; pathThrottle=true; aiTargetCull=true;
         itemDespawnBoost=true; mobDespawnBoost=true; xpOrbCull=true;
-        arrowCull=true; itemEntityCap=true; autosaveDisable=true;
+        arrowCull=true; itemEntityCap=true;
         playerRenderCull=true; itemFrameCull=true; paintingCull=true;
-        entityShadowCull=true;
 
         if (level == 1) {
             d2=64; d4=96; d8=128; d16=192; d32=256;
@@ -407,7 +401,6 @@ public class OtmMod {
             return min;
         }
 
-        // MOB CAP via EntityJoinWorldEvent (compativel com 1.7.10)
         @SubscribeEvent
         public void onMobJoinWorld(EntityJoinWorldEvent e) {
             if (level == 0 || !mobCap) return;
@@ -428,14 +421,6 @@ public class OtmMod {
                 e.setCanceled(true);
                 mobsBlockedCount++;
             }
-        }
-
-        @SubscribeEvent
-        public void onWorldLoad(WorldEvent.Load e) {
-            if (level == 0 || !autosaveDisable) return;
-            if (!(e.world instanceof WorldServer)) return;
-            WorldServer ws = (WorldServer) e.world;
-            ws.disableLevelSaving = true;
         }
 
         private void doMergeItems(World w) {
@@ -514,7 +499,7 @@ public class OtmMod {
         private int origRender = -1;
         private boolean origFancy = true;
         private int origParticles = 0;
-        private boolean origClouds = true;
+        private int origClouds = 0;
         private boolean origAO = true;
         private int particlesThisFrame = 0;
 
@@ -531,7 +516,7 @@ public class OtmMod {
             if (entityCull && dSq > (double) cullDist * cullDist) {
                 e.setCanceled(true);
                 culledCount++;
-            } else if (entityShadowCull && dSq > (double) shadowDist * shadowDist) {
+            } else if (dSq > (double) shadowDist * shadowDist) {
                 e.setCanceled(true);
                 culledCount++;
             }
@@ -612,8 +597,8 @@ public class OtmMod {
                 boolean changed = false;
                 if (mc.gameSettings.fancyGraphics) {
                     mc.gameSettings.fancyGraphics = false; changed = true;
-                } else if (mc.gameSettings.clouds) {
-                    mc.gameSettings.clouds = false; changed = true;
+                } else if (mc.gameSettings.clouds > 0) {
+                    mc.gameSettings.clouds = 0; changed = true;
                 } else if (mc.gameSettings.particleSetting < 2) {
                     mc.gameSettings.particleSetting++; changed = true;
                 } else if (mc.gameSettings.renderDistanceChunks > minRender) {
@@ -634,8 +619,8 @@ public class OtmMod {
                     mc.gameSettings.renderDistanceChunks++; changed = true;
                 } else if (mc.gameSettings.particleSetting > origParticles) {
                     mc.gameSettings.particleSetting--; changed = true;
-                } else if (origClouds && !mc.gameSettings.clouds) {
-                    mc.gameSettings.clouds = true; changed = true;
+                } else if (origClouds > 0 && mc.gameSettings.clouds == 0) {
+                    mc.gameSettings.clouds = origClouds; changed = true;
                 } else if (origFancy && !mc.gameSettings.fancyGraphics) {
                     mc.gameSettings.fancyGraphics = true; changed = true;
                 }
