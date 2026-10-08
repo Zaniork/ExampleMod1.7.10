@@ -895,7 +895,7 @@ public class OtmclMod {
         boolean wrapped = false;
         boolean captured = false;
         boolean animKilled = false;
-        boolean oFancy, oClouds, oShadows, oBobbing, oSnooper;
+        boolean oFancy, oClouds, oBobbing, oSnooper;
         int oAO, oParticles, oRender;
         int partTick = 0;
         int lowFps = 0;
@@ -1056,7 +1056,6 @@ public class OtmclMod {
                 captured = true;
                 oFancy = gs.fancyGraphics;
                 oClouds = gs.clouds;
-                oShadows = gs.entityShadows;
                 oBobbing = gs.viewBobbing;
                 oSnooper = gs.snooperEnabled;
                 oAO = gs.ambientOcclusion;
@@ -1066,7 +1065,6 @@ public class OtmclMod {
             if (lv == 0) {
                 gs.fancyGraphics = oFancy;
                 gs.clouds = oClouds;
-                gs.entityShadows = oShadows;
                 gs.viewBobbing = oBobbing;
                 gs.snooperEnabled = oSnooper;
                 gs.ambientOcclusion = oAO;
@@ -1074,7 +1072,6 @@ public class OtmclMod {
                 gs.renderDistanceChunks = oRender;
             } else {
                 gs.clouds = false;
-                gs.entityShadows = false;
                 gs.snooperEnabled = false;
                 gs.fancyGraphics = lv >= 2 ? false : oFancy;
                 gs.ambientOcclusion = lv >= 3 ? 0 : (lv == 2 ? Math.min(oAO, 1) : oAO);
