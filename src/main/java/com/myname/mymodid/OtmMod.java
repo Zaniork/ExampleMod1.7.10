@@ -1,7 +1,6 @@
 package com.myname.mymodid;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
 import java.util.List;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -27,6 +26,7 @@ import net.minecraft.entity.monster.IMob;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.projectile.EntityArrow;
 import net.minecraft.item.ItemStack;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
@@ -37,7 +37,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.living.LivingEvent;
 
-@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "3.2", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmMod.MODID, name = "OTM Performance", version = "5.0", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmMod {
 
     public static final String MODID = "otm";
@@ -47,25 +47,25 @@ public class OtmMod {
 
     static int d2 = 64, d4 = 96, d8 = 128, d16 = 192, d32 = 256;
 
-    static int cullDist       = 96;
-    static int playerCullDist = 128;
+    static int cullDist        = 96;
+    static int playerCullDist  = 128;
+    static int mobDespawnDist  = 128;
+    static int tileDist        = 96;
 
-    static int mobCapPerChunk   = 16;
     static int itemCapPerWorld  = 600;
     static int xpOrbCapPerWorld = 300;
     static int itemMergeDist    = 2;
     static int itemMergeAge     = 40;
     static int itemDespawnAge   = 6000;
-    static int mobDespawnDist   = 128;
     static int arrowDespawnAge  = 1200;
 
+    static int forcedRenderDist = -1;
     static int fpsLow = 25, fpsHigh = 70, minRender = 4;
 
     static boolean adaptiveTick     = false;
     static boolean entityCull       = false;
     static boolean itemMerge        = false;
     static boolean xpMerge          = false;
-    static boolean mobCap           = false;
     static boolean adaptiveClient   = false;
     static boolean pathThrottle     = false;
     static boolean aiTargetCull     = false;
@@ -75,62 +75,83 @@ public class OtmMod {
     static boolean arrowCull        = false;
     static boolean itemEntityCap    = false;
     static boolean playerRenderCull = false;
+    static boolean tileThrottle     = false;
     static boolean metrics = true;
 
     static volatile double msptAvg = 0;
     static volatile int fps = 0;
     static volatile int skippedPerSec = 0, culledPerSec = 0;
     static volatile int itemsMerged = 0, xpMerged = 0;
-    static volatile int mobsBlocked = 0;
-    static volatile int itemsCapped = 0, pathsCleared = 0;
+    static volatile int mobsDespawned = 0, tilesPaused = 0, pathsCleared = 0;
+    static volatile int itemsCapped = 0;
 
     static int skippedCount = 0, culledCount = 0;
-    static int itemsMergedCount = 0, xpMergedCount = 0, mobsBlockedCount = 0;
-    static int itemsCappedCount = 0, pathsClearedCount = 0;
+    static int itemsMergedCount = 0, xpMergedCount = 0;
+    static int mobsDespawnedCount = 0, tilePausedCount = 0;
+    static int pathsClearedCount = 0, itemsCappedCount = 0;
 
     public OtmMod() { instance = this; }
 
     static void applyLevel(int lvl) {
-        level = MathHelper.clamp_int(lvl, 0, 3);
+        level = MathHelper.clamp_int(lvl, 0, 5);
 
         if (level == 0) {
             adaptiveTick=false; entityCull=false; itemMerge=false; xpMerge=false;
-            mobCap=false; adaptiveClient=false;
-            pathThrottle=false; aiTargetCull=false;
+            adaptiveClient=false; pathThrottle=false; aiTargetCull=false;
             itemDespawnBoost=false; mobDespawnBoost=false; xpOrbCull=false;
-            arrowCull=false; itemEntityCap=false;
-            playerRenderCull=false;
+            arrowCull=false; itemEntityCap=false; playerRenderCull=false;
+            tileThrottle=false;
+            forcedRenderDist = -1;
             return;
         }
 
         adaptiveTick=true; entityCull=true; itemMerge=true; xpMerge=true;
-        mobCap=true; adaptiveClient=true;
-        pathThrottle=true; aiTargetCull=true;
+        adaptiveClient=true; pathThrottle=true; aiTargetCull=true;
         itemDespawnBoost=true; mobDespawnBoost=true; xpOrbCull=true;
-        arrowCull=true; itemEntityCap=true;
-        playerRenderCull=true;
+        arrowCull=true; itemEntityCap=true; playerRenderCull=true;
+        tileThrottle=true;
 
         if (level == 1) {
             d2=64; d4=96; d8=128; d16=192; d32=256;
-            cullDist=96; playerCullDist=128;
-            mobCapPerChunk=16; itemCapPerWorld=600; xpOrbCapPerWorld=300;
+            cullDist=96; playerCullDist=128; mobDespawnDist=128; tileDist=96;
+            itemCapPerWorld=600; xpOrbCapPerWorld=300;
             itemMergeDist=2; itemMergeAge=40;
-            itemDespawnAge=6000; mobDespawnDist=128; arrowDespawnAge=1200;
+            itemDespawnAge=6000; arrowDespawnAge=1200;
+            forcedRenderDist = -1;
             fpsLow=25; fpsHigh=70; minRender=6;
         } else if (level == 2) {
             d2=32; d4=64; d8=96; d16=128; d32=192;
-            cullDist=64; playerCullDist=96;
-            mobCapPerChunk=10; itemCapPerWorld=300; xpOrbCapPerWorld=150;
+            cullDist=64; playerCullDist=96; mobDespawnDist=64; tileDist=64;
+            itemCapPerWorld=300; xpOrbCapPerWorld=150;
             itemMergeDist=3; itemMergeAge=20;
-            itemDespawnAge=3600; mobDespawnDist=96; arrowDespawnAge=800;
+            itemDespawnAge=3600; arrowDespawnAge=800;
+            forcedRenderDist = 6;
             fpsLow=30; fpsHigh=75; minRender=4;
+        } else if (level == 3) {
+            d2=8; d4=12; d8=16; d16=20; d32=24;
+            cullDist=16; playerCullDist=32; mobDespawnDist=32; tileDist=32;
+            itemCapPerWorld=60; xpOrbCapPerWorld=30;
+            itemMergeDist=6; itemMergeAge=5;
+            itemDespawnAge=1200; arrowDespawnAge=200;
+            forcedRenderDist = 2;
+            fpsLow=60; fpsHigh=120; minRender=2;
+        } else if (level == 4) {
+            d2=4; d4=6; d8=8; d16=10; d32=12;
+            cullDist=12; playerCullDist=16; mobDespawnDist=24; tileDist=16;
+            itemCapPerWorld=30; xpOrbCapPerWorld=15;
+            itemMergeDist=8; itemMergeAge=2;
+            itemDespawnAge=600; arrowDespawnAge=100;
+            forcedRenderDist = 2;
+            fpsLow=70; fpsHigh=144; minRender=2;
         } else {
-            d2=16; d4=32; d8=48; d16=64; d32=96;
-            cullDist=32; playerCullDist=48;
-            mobCapPerChunk=4; itemCapPerWorld=120; xpOrbCapPerWorld=60;
-            itemMergeDist=4; itemMergeAge=10;
-            itemDespawnAge=1800; mobDespawnDist=64; arrowDespawnAge=400;
-            fpsLow=45; fpsHigh=90; minRender=2;
+            // NÍVEL 5 - HARDCORE (mobs visíveis em 12 blocos pra não surgir do nada)
+            d2=3; d4=4; d8=5; d16=6; d32=7;
+            cullDist=12; playerCullDist=8; mobDespawnDist=20; tileDist=8;
+            itemCapPerWorld=15; xpOrbCapPerWorld=8;
+            itemMergeDist=10; itemMergeAge=1;
+            itemDespawnAge=400; arrowDespawnAge=60;
+            forcedRenderDist = 2;
+            fpsLow=90; fpsHigh=144; minRender=2;
         }
     }
 
@@ -138,7 +159,7 @@ public class OtmMod {
     public void preInit(FMLPreInitializationEvent e) {
         Configuration c = new Configuration(e.getSuggestedConfigurationFile());
         c.load();
-        int start = c.getInt("nivel_inicial", "geral", 0, 0, 3, "0=off 1=leve 2=medio 3=agressivo");
+        int start = c.getInt("nivel_inicial", "geral", 0, 0, 5, "0=off 1=leve 2=medio 3=extremo 4=insano 5=hardcore");
         metrics = c.getBoolean("metricas_f3", "geral", true, "Mostra no F3");
         c.save();
         applyLevel(start);
@@ -180,9 +201,10 @@ public class OtmMod {
                     culledPerSec=culledCount;   culledCount=0;
                     itemsMerged=itemsMergedCount; itemsMergedCount=0;
                     xpMerged=xpMergedCount; xpMergedCount=0;
-                    mobsBlocked=mobsBlockedCount; mobsBlockedCount=0;
-                    itemsCapped=itemsCappedCount; itemsCappedCount=0;
+                    mobsDespawned=mobsDespawnedCount; mobsDespawnedCount=0;
+                    tilesPaused=tilePausedCount; tilePausedCount=0;
                     pathsCleared=pathsClearedCount; pathsClearedCount=0;
+                    itemsCapped=itemsCappedCount; itemsCappedCount=0;
                 }
             }
         }
@@ -241,32 +263,113 @@ public class OtmMod {
                 if (itemMerge) doMergeItems(w);
                 if (xpMerge)   doMergeXP(w);
             }
-            if ((itemDespawnBoost || mobDespawnBoost || xpOrbCull || arrowCull) && now % 40L == 0L)
+            if ((itemDespawnBoost || mobDespawnBoost || xpOrbCull || arrowCull) && now % 40L == 0L) {
                 doEntityHousekeeping(w);
+            }
             if (itemEntityCap && now % 60L == 0L) doEntityCaps(w);
+            if (tileThrottle && now % 40L == 0L) doTileThrottle(w);
+        }
+
+        private static Field TE_LIST_FIELD = null;
+        private static boolean TE_FIELD_CHECKED = false;
+
+        @SuppressWarnings("unchecked")
+        private static List<TileEntity> getTickableTE(World w) {
+            if (!TE_FIELD_CHECKED) {
+                TE_FIELD_CHECKED = true;
+                String[] names = new String[] {
+                    "tickableTileEntities",
+                    "field_147483_b",
+                    "field_72997_g",
+                    "loadedTileEntityList"
+                };
+                for (int i = 0; i < names.length; i++) {
+                    try {
+                        Field f = World.class.getDeclaredField(names[i]);
+                        f.setAccessible(true);
+                        TE_LIST_FIELD = f;
+                        break;
+                    } catch (Throwable t) { }
+                }
+            }
+            if (TE_LIST_FIELD == null) return null;
+            try {
+                Object o = TE_LIST_FIELD.get(w);
+                if (o instanceof List) return (List<TileEntity>) o;
+            } catch (Throwable t) { }
+            return null;
+        }
+
+        private void doTileThrottle(World w) {
+            List<TileEntity> tick = getTickableTE(w);
+            if (tick == null) return;
+
+            List players = w.playerEntities;
+            if (players == null || players.isEmpty()) return;
+
+            double limit = (double) tileDist * tileDist;
+
+            try {
+                for (int i = tick.size() - 1; i >= 0; i--) {
+                    TileEntity te;
+                    try { te = tick.get(i); } catch (Throwable t) { continue; }
+                    if (te == null) continue;
+
+                    double min = Double.MAX_VALUE;
+                    for (int p = 0; p < players.size(); p++) {
+                        Object po = players.get(p);
+                        if (!(po instanceof EntityPlayer)) continue;
+                        EntityPlayer pl = (EntityPlayer) po;
+                        double dx = pl.posX - (te.xCoord + 0.5);
+                        double dy = pl.posY - (te.yCoord + 0.5);
+                        double dz = pl.posZ - (te.zCoord + 0.5);
+                        double d = dx*dx + dy*dy + dz*dz;
+                        if (d < min) min = d;
+                    }
+
+                    if (min > limit) {
+                        tick.remove(i);
+                        tilePausedCount++;
+                    }
+                }
+            } catch (Throwable t) { }
         }
 
         private void doEntityHousekeeping(World w) {
             List ents = w.loadedEntityList;
             if (ents == null) return;
-            for (int i = 0; i < ents.size(); i++) {
-                Object o = ents.get(i);
+            List players = w.playerEntities;
+            if (players == null || players.isEmpty()) return;
+
+            double mobLimit = (double) mobDespawnDist * mobDespawnDist;
+
+            for (int i = ents.size() - 1; i >= 0; i--) {
+                Object o;
+                try { o = ents.get(i); } catch (Throwable t) { continue; }
                 if (!(o instanceof Entity)) continue;
                 Entity en = (Entity) o;
                 if (en.isDead) continue;
 
-                double dSq = nearestPlayerSq(en);
-                double limit = (double) mobDespawnDist * mobDespawnDist;
+                double minSq = Double.MAX_VALUE;
+                for (int p = 0; p < players.size(); p++) {
+                    Object po = players.get(p);
+                    if (!(po instanceof EntityPlayer)) continue;
+                    double d = en.getDistanceSqToEntity((EntityPlayer) po);
+                    if (d < minSq) minSq = d;
+                }
 
                 if (itemDespawnBoost && en instanceof EntityItem) {
-                    if (dSq > limit && en.ticksExisted > itemDespawnAge) en.setDead();
+                    if (minSq > mobLimit && en.ticksExisted > itemDespawnAge) en.setDead();
                 } else if (xpOrbCull && en instanceof EntityXPOrb) {
-                    if (dSq > limit) en.setDead();
+                    if (minSq > mobLimit) en.setDead();
                 } else if (arrowCull && en instanceof EntityArrow) {
-                    if (dSq > limit && en.ticksExisted > arrowDespawnAge) en.setDead();
+                    if (minSq > mobLimit && en.ticksExisted > arrowDespawnAge) en.setDead();
                 } else if (mobDespawnBoost && en instanceof IMob
                         && !(en instanceof IBossDisplayData)) {
-                    if (dSq > limit) en.setDead();
+                    if (minSq > mobLimit) {
+                        en.setDead();
+                        mobsDespawnedCount++;
+                    }
                 }
             }
         }
@@ -402,6 +505,7 @@ public class OtmMod {
         private long lastFps = 0;
         private long lastAdjust = 0;
         private int lowSeconds = 0;
+        private int lastAppliedLevel = -1;
 
         private int origRender = -1;
         private boolean origFancy = true;
@@ -444,6 +548,49 @@ public class OtmMod {
                 fps = frames; frames = 0; lastFps = now;
                 if (level > 0 && adaptiveClient) adapt(now);
             }
+
+            if (lastAppliedLevel != level) {
+                lastAppliedLevel = level;
+                applyClientLevel();
+            }
+        }
+
+        private void applyClientLevel() {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null || mc.theWorld == null) return;
+
+            if (origRender < 0) {
+                origRender = mc.gameSettings.renderDistanceChunks;
+                origFancy = mc.gameSettings.fancyGraphics;
+                origParticles = mc.gameSettings.particleSetting;
+                origClouds = mc.gameSettings.clouds;
+                origAO = mc.gameSettings.ambientOcclusion;
+            }
+
+            if (level == 0) {
+                if (origRender > 0) mc.gameSettings.renderDistanceChunks = origRender;
+                mc.gameSettings.fancyGraphics = origFancy;
+                mc.gameSettings.particleSetting = origParticles;
+                mc.gameSettings.clouds = origClouds;
+                mc.gameSettings.ambientOcclusion = origAO;
+                mc.renderGlobal.loadRenderers();
+                return;
+            }
+
+            if (level == 1) {
+                return;
+            }
+
+            if (forcedRenderDist > 0) {
+                mc.gameSettings.renderDistanceChunks = forcedRenderDist;
+            }
+            mc.gameSettings.fancyGraphics = false;
+            mc.gameSettings.clouds = false;
+            if (level >= 2) mc.gameSettings.particleSetting = 2;
+            if (level >= 3) mc.gameSettings.ambientOcclusion = 0;
+
+            mc.renderGlobal.loadRenderers();
+            lastAdjust = System.currentTimeMillis();
         }
 
         private void adapt(long now) {
@@ -478,7 +625,7 @@ public class OtmMod {
                     lastAdjust = now;
                     lowSeconds = 0;
                 }
-            } else if (fps > fpsHigh && now - lastAdjust > 30000) {
+            } else if (fps > fpsHigh && now - lastAdjust > 30000 && level == 1) {
                 boolean changed = false;
                 if (mc.gameSettings.ambientOcclusion == 0 && origAO > 0) {
                     mc.gameSettings.ambientOcclusion = origAO; changed = true;
@@ -511,9 +658,10 @@ public class OtmMod {
             if (level > 0) {
                 e.left.add("\u00A7b[OTM]\u00A7r skip " + skippedPerSec
                     + " | cull " + culledPerSec
+                    + " | TE " + tilesPaused
+                    + " | mobs " + mobsDespawned
                     + " | itens " + itemsMerged
-                    + " | xp " + xpMerged
-                    + " | mobs " + mobsBlocked);
+                    + " | xp " + xpMerged);
                 e.left.add("\u00A7b[OTM]\u00A7r cap " + itemsCapped
                     + " | path " + pathsCleared);
             }
@@ -524,7 +672,7 @@ public class OtmMod {
     public static class CmdOtm extends CommandBase {
         @Override public String getCommandName() { return "otm"; }
         @Override public String getCommandUsage(ICommandSender s) {
-            return "/otm <0|1|2|3>";
+            return "/otm <0|1|2|3|4|5>";
         }
         @Override public int getRequiredPermissionLevel() { return 0; }
         @Override public boolean canCommandSenderUseCommand(ICommandSender s) { return true; }
@@ -542,8 +690,8 @@ public class OtmMod {
                 s.addChatMessage(new ChatComponentText("\u00A7cUso: " + getCommandUsage(s)));
                 return;
             }
-            if (lvl < 0 || lvl > 3) {
-                s.addChatMessage(new ChatComponentText("\u00A7cUse 0, 1, 2 ou 3."));
+            if (lvl < 0 || lvl > 5) {
+                s.addChatMessage(new ChatComponentText("\u00A7cUse 0, 1, 2, 3, 4 ou 5."));
                 return;
             }
             applyLevel(lvl);
@@ -551,12 +699,22 @@ public class OtmMod {
             if (level == 0) {
                 s.addChatMessage(new ChatComponentText("\u00A7bOTM\u00A7r otimizacao \u00A7cDESLIGADA\u00A7r."));
             } else {
-                String nome = level == 1 ? "LEVE" : level == 2 ? "MEDIO" : "AGRESSIVO";
+                String nome;
+                if (level == 1) nome = "LEVE";
+                else if (level == 2) nome = "MEDIO";
+                else if (level == 3) nome = "EXTREMO";
+                else if (level == 4) nome = "INSANO";
+                else nome = "HARDCORE";
+
                 s.addChatMessage(new ChatComponentText("\u00A7bOTM\u00A7r nivel \u00A7e" + level + " (" + nome + ")\u00A7r aplicado."));
-                s.addChatMessage(new ChatComponentText(
-                    "\u00A7bOTM\u00A7r cull=" + cullDist
-                    + " | mobs/chunk=" + mobCapPerChunk
-                    + " | fps=" + fpsLow + "-" + fpsHigh));
+
+                if (level >= 2) {
+                    s.addChatMessage(new ChatComponentText(
+                        "\u00A7bOTM\u00A7r render " + forcedRenderDist
+                        + " | mobs renderizam em " + cullDist + "b"
+                        + " | mobs despawn " + mobDespawnDist + "b"
+                        + " | TE " + tileDist + "b"));
+                }
             }
         }
     }
