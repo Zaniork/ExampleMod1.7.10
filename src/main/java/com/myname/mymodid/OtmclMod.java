@@ -5,6 +5,7 @@ import java.lang.management.MemoryPoolMXBean;
 import java.lang.management.MemoryType;
 import java.lang.management.MemoryUsage;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -76,7 +77,9 @@ import net.minecraft.world.chunk.IChunkProvider;
 import net.minecraft.world.gen.ChunkProviderServer;
 import net.minecraftforge.client.ClientCommandHandler;
 import net.minecraftforge.client.IRenderHandler;
+import net.minecraftforge.client.event.DrawBlockHighlightEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.common.DimensionManager;
 import net.minecraftforge.common.MinecraftForge;
@@ -90,25 +93,27 @@ import net.minecraftforge.event.terraingen.PopulateChunkEvent;
 import org.lwjgl.opengl.Display;
 
 /**
- * OtmclMod v1.2 - otimizacao drastica para Minecraft 1.7.10 (Forge, arquivo unico).
+ * OtmclMod v1.5 - otimizacao drastica para Minecraft 1.7.10 (Forge, arquivo unico).
  *
  * <p>6 niveis (0 = vanilla ... 5 = maximo). Cada numero de cada nivel e editavel no config (secao "niveis").
- * Comando: /otmcl <0-5> | auto | status | limpar | ajuda
+ * Comando: /otmcl (ou /otm) <0-5> | auto | turbo | status | perfil | limpar | ajuda
+ *
+ * <p>v1.5: o TURBO nao mexe mais no volume. Turbo mais pesado: entidades so ate 10 blocos, itens ate 6, TEs ate 8,
+ * limite por frame bem menor, animacoes de textura sempre off, mobs/itens/XP/flechas/explosoes cortados mais fundo,
+ * random tick 1, clima e fogo off, pathfinding curto, TEs dormindo perto, dimensoes vazias descarregadas.
+ * Os numeros do turbo agora ficam na secao "turbo_v15" do config.
  *
  * <p>SERVIDOR: S1 ticking adaptativo de mobs, S2 TileEntities dormindo, S3 fusao/vida curta de itens, S4 fusao de XP,
  * S5 spawn reduzido + lista negra + despawn, S6 limite de mobs por chunk, S7 chunk reaper, S8 gamerules e clima,
- * S9 worldgen enxuto, S10 modo auto, S11 flechas, S12 limpeza manual,
- * S13 (NOVO) alcance de pathfinding reduzido (menos A*), S14 (NOVO) dimensoes vazias sao descarregadas.
+ * S9 worldgen enxuto, S10 modo auto, S11 flechas, S12 limpeza manual, S13 pathfinding curto, S14 dimensoes vazias,
+ * S15 freio de emergencia, S16 limite de explosoes, S17 teto global de mobs, S18 animais por chunk,
+ * S19 itens-lixo, S20 /otmcl perfil.
  *
  * <p>CLIENTE: C1 pacote de graficos, C2/C3/C4 culling de entidades e tile entities, C5 teto de particulas, C6 ceu/clima,
- * C7 texturas animadas, C8 F3, C9 janela sem foco dorme,
- * C10 (NOVO) filtro de particulas na origem (por chance e por distancia),
- * C11 limite de entidades e tile entities desenhadas por frame (as mais distantes saem primeiro).
- * <p>v1.2: S15 freio de emergencia (mspt alto = spawn parado + limpeza), S16 limite de explosoes por tick,
- * S17 teto global de entidades por mundo, S18 limite de animais por chunk, S19 itens-lixo somem rapido,
- * S20 /otmcl perfil (quem esta pesando), C12 guarda de memoria (reduz render distance se a RAM esta no limite).
+ * C7 texturas animadas, C8 F3, C9 janela sem foco dorme, C10 filtro de particulas na origem,
+ * C11 limite de entidades e TEs desenhadas por frame, C12 guarda de memoria.
  */
-@Mod(modid = OtmclMod.MODID, name = "Otmcl Mod", version = "1.2", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OtmclMod.MODID, name = "Otmcl Mod", version = "1.5", acceptedMinecraftVersions = "[1.7.10]")
 public class OtmclMod {
 
     public static final String MODID = "otmclmod";
@@ -133,16 +138,37 @@ public class OtmclMod {
     static int[] WG_TRIM;
     static int[] BLACKLIST_LV;
     static int[] ARROW_LIFE;
-    static int[] FOLLOW_CAP;   // NOVO: alcance maximo de perseguicao/pathfinding dos mobs (0 = vanilla)
-    static int[] JUNK_LIFE;    // NOVO: vida (ticks) dos itens-lixo no chao (0 = desliga)
-    static int[] EXPL_CAP;     // NOVO: max de explosoes por tick (0 = desliga)
-    static int[] ENT_CAP;      // NOVO: teto global de mobs por mundo (0 = desliga)
-    static int[] ANIMAL_CAP;   // NOVO: animais por chunk (0 = desliga)
-    static int emergMspt = 70;      // NOVO: mspt (curto) que dispara o freio de emergencia (0 desliga)
-    static int emergSeconds = 20;   // NOVO: duracao do freio
-    static int memPct = 90;         // NOVO: % de RAM "viva" que dispara a guarda de memoria (0 desliga)
+    static int[] FOLLOW_CAP;
+    static int[] JUNK_LIFE;
+    static int[] EXPL_CAP;
+    static int[] ENT_CAP;
+    static int[] ANIMAL_CAP;
+
+    // --- turbo ---
+    static boolean turbo = false;
+    static boolean turboHand = true;
+    static int T_RD = 2, T_LIVING = 10, T_DYN = 6, T_TE = 8, T_TICKDIST = 5, T_SPAWN = 95;
+    static int T_FOV = 55;
+    static boolean turboClientTick = true;
+    static boolean turboNoTe = false;
+    static int T_FRAME_LIVING = 12, T_FRAME_DYN = 10, T_FRAME_TE = 16;
+    static int T_MOBCAP = 14, T_ENTCAP = 150, T_ITEMLIFE = 400, T_RTS = 1;
+
+    static boolean turboOn() {
+        return turbo && level > 0;
+    }
+
+    /** Valor efetivo: no turbo usa o mais restrito entre o do nivel e o do turbo (0 no nivel = desligado). */
+    static int eff(int base, int turboVal) {
+        if (!turboOn()) return base;
+        return base > 0 ? Math.min(base, turboVal) : turboVal;
+    }
+
+    static int emergMspt = 70;
+    static int emergSeconds = 20;
+    static int memPct = 90;
     static final Set<String> JUNK = new HashSet<String>();
-    static int[] DIM_UNLOAD;   // NOVO: 1 = descarrega Nether/End/etc sem jogadores
+    static int[] DIM_UNLOAD;
     // --- cliente ---
     static int[] CULL_LIVING;
     static int[] CULL_DYN;
@@ -154,11 +180,11 @@ public class OtmclMod {
     static int[] SKY_MODE;
     static int[] ANIM_KILL;
     static int[] UNFOCUS_MS;
-    static int[] PART_DROP;    // NOVO: % de particulas descartadas ao nascer
-    static int[] PART_DIST;    // NOVO: particulas alem desta distancia nem nascem (0 = desliga)
-    static int[] FRAME_LIVING; // NOVO: max de entidades vivas desenhadas por frame (0 = sem limite)
-    static int[] FRAME_DYN;    // NOVO: max de itens/flechas/etc desenhados por frame
-    static int[] FRAME_TE;     // NOVO: max de tile entities desenhadas por frame
+    static int[] PART_DROP;
+    static int[] PART_DIST;
+    static int[] FRAME_LIVING;
+    static int[] FRAME_DYN;
+    static int[] FRAME_TE;
 
     static String[] sleepableTE = {"TileEntityChest", "TileEntityEnderChest", "TileEntityEnchantmentTable"};
     static boolean wrapModded = false;
@@ -239,6 +265,28 @@ public class OtmclMod {
             "Alcance maximo de perseguicao dos mobs novos em blocos (0 desliga). Menos alcance = bem menos A*");
         DIM_UNLOAD = table("descarregar_dimensoes_vazias", new int[] {0, 0, 0, 0, 1, 1}, 0, 1,
             "1 = descarrega Nether/End/outras dimensoes sem jogadores (nao mexe no Overworld)");
+
+        // ---- turbo (secao nova "turbo_v15": os numeros novos valem sem apagar o config antigo) ----
+        turbo = cfg.getBoolean("turbo", "geral", false, "Modo turbo ligado (liga/desliga com /otmcl turbo; precisa de nivel 1+)");
+        String tc = "turbo_v15";
+        turboHand = cfg.getBoolean("turbo_esconder_mao", tc, true, "Turbo esconde a mao e o contorno do bloco");
+        T_RD = cfg.getInt("turbo_render_dist", tc, T_RD, 2, 32, "Render distance no turbo");
+        T_LIVING = cfg.getInt("turbo_dist_vivos", tc, T_LIVING, 4, 256, "Entidades vivas so sao desenhadas ate aqui (blocos)");
+        T_DYN = cfg.getInt("turbo_dist_outras", tc, T_DYN, 4, 256, "Itens/flechas/etc so ate aqui (blocos)");
+        T_TE = cfg.getInt("turbo_dist_te", tc, T_TE, 4, 256, "Tile entities so ate aqui (blocos)");
+        turboNoTe = cfg.getBoolean("turbo_sem_tile_entities", tc, false, "Turbo quase nao desenha tile entities (so a menos de 3 blocos)");
+        T_TICKDIST = cfg.getInt("turbo_tick_dist", tc, T_TICKDIST, 3, 128, "Blocos por degrau de ticking dos mobs no turbo");
+        T_FOV = cfg.getInt("turbo_fov_max", tc, T_FOV, 0, 110, "FOV maximo no turbo em graus (0 = nao mexe). Menos FOV = menos chunks no quadro");
+        turboClientTick = cfg.getBoolean("turbo_tick_cliente", tc, true, "Turbo: entidades distantes atualizam menos no cliente");
+        T_SPAWN = cfg.getInt("turbo_spawn_negado_pct", tc, T_SPAWN, 0, 100, "% de spawns negados no turbo");
+        T_FRAME_LIVING = cfg.getInt("turbo_frame_vivos", tc, T_FRAME_LIVING, 0, 1000, "Max de entidades vivas por frame no turbo (0 desliga)");
+        T_FRAME_DYN = cfg.getInt("turbo_frame_outras", tc, T_FRAME_DYN, 0, 1000, "Max de itens/flechas/etc por frame no turbo (0 desliga)");
+        T_FRAME_TE = cfg.getInt("turbo_frame_te", tc, T_FRAME_TE, 0, 1000, "Max de tile entities por frame no turbo (0 desliga)");
+        T_MOBCAP = cfg.getInt("turbo_mobs_por_chunk", tc, T_MOBCAP, 1, 500, "Limite de mobs por chunk no turbo");
+        T_ENTCAP = cfg.getInt("turbo_teto_mobs_mundo", tc, T_ENTCAP, 10, 5000, "Teto global de mobs por dimensao no turbo");
+        T_ITEMLIFE = cfg.getInt("turbo_item_vida", tc, T_ITEMLIFE, 100, 6000, "Vida do item no chao no turbo (ticks)");
+        T_RTS = cfg.getInt("turbo_random_tick", tc, T_RTS, 0, 20, "randomTickSpeed no turbo (0 para plantas, 1 = bem lento)");
+
         JUNK_LIFE = table("itens_lixo_vida", new int[] {0, 0, 600, 300, 200, 100}, 0, 6000, "Vida dos itens-lixo no chao em ticks (0 desliga)");
         EXPL_CAP = table("explosoes_por_tick", new int[] {0, 0, 0, 12, 6, 3}, 0, 200, "Max de explosoes por tick (0 desliga). Evita lag de TNT");
         ENT_CAP = table("teto_mobs_mundo", new int[] {0, 0, 0, 500, 350, 220}, 0, 5000, "Teto global de mobs por dimensao (0 desliga)");
@@ -313,6 +361,7 @@ public class OtmclMod {
         if (cfg == null) return;
         cfg.get("geral", "nivel_inicial", 0).set(level);
         cfg.get("geral", "auto", false).set(auto);
+        cfg.get("geral", "turbo", false).set(turbo);
         cfg.save();
     }
 
@@ -698,7 +747,7 @@ public class OtmclMod {
     static void unloadIdleDims() {
         MinecraftServer srv = MinecraftServer.getServer();
         if (srv == null) return;
-        if (DIM_UNLOAD[level] <= 0) {
+        if (DIM_UNLOAD[level] <= 0 && !turboOn()) {
             IDLE_DIMS.clear();
             return;
         }
@@ -741,8 +790,10 @@ public class OtmclMod {
             cfg.get("interno", "doFireTick_original", "").set(origFire);
             cfg.save();
         }
-        gr.setOrCreateGameRule("randomTickSpeed", RTS[lv] < 0 ? origRts : String.valueOf(RTS[lv]));
-        gr.setOrCreateGameRule("doFireTick", (lv > 0 && FIRE_OFF[lv] > 0) ? "false" : origFire);
+        int rts = turboOn() ? T_RTS : RTS[lv];
+        boolean fireOff = lv > 0 && (FIRE_OFF[lv] > 0 || turboOn());
+        gr.setOrCreateGameRule("randomTickSpeed", rts < 0 ? origRts : String.valueOf(rts));
+        gr.setOrCreateGameRule("doFireTick", fireOff ? "false" : origFire);
         for (WorldServer w : srv.worldServers) {
             if (w != null) wake(w);
         }
@@ -836,23 +887,33 @@ public class OtmclMod {
             int lv = level;
             if (lv == 0) return;
             long t = w.getTotalWorldTime();
-            if (TE_SLEEP[lv] > 0) {
+
+            int teS = eff(TE_SLEEP[lv], 16);
+            if (teS > 0) {
                 if (t % 20 == 0) wake(w);
-                else if (t % 20 == 1) sleep(w, TE_SLEEP[lv]);
+                else if (t % 20 == 1) sleep(w, teS);
             }
-            if (ITEM_MERGE[lv] > 0 && t % 40 == 7) mergeItems(w, ITEM_MERGE[lv]);
-            if (MOB_CAP[lv] > 0 && t % 100 == 13) mobCap(w, MOB_CAP[lv], false);
-            if (ANIMAL_CAP[lv] > 0 && t % 100 == 17) mobCap(w, ANIMAL_CAP[lv], true);
-            if (ENT_CAP[lv] > 0 && t % 200 == 21) entityCap(w, ENT_CAP[lv]);
-            if (REAP_MARGIN[lv] > 0 && t % 100 == 57) reap(w, REAP_MARGIN[lv]);
-            if (WEATHER_OFF[lv] > 0 && t % 100 == 3) clearWeather(w);
-            if (ARROW_LIFE[lv] > 0 && t % 100 == 31) arrowReap(w, ARROW_LIFE[lv]);
+            int im = turboOn() ? Math.max(ITEM_MERGE[lv], 4) : ITEM_MERGE[lv];
+            if (im > 0 && t % 40 == 7) mergeItems(w, im);
+            int mcap = eff(MOB_CAP[lv], T_MOBCAP);
+            if (mcap > 0 && t % 100 == 13) mobCap(w, mcap, false);
+            int acap = eff(ANIMAL_CAP[lv], Math.max(4, T_MOBCAP / 2));
+            if (acap > 0 && t % 100 == 17) mobCap(w, acap, true);
+            int ecap = eff(ENT_CAP[lv], T_ENTCAP);
+            if (ecap > 0 && t % 200 == 21) entityCap(w, ecap);
+            int rm = eff(REAP_MARGIN[lv], 1);
+            if (rm > 0 && t % 100 == 57) reap(w, rm);
+            if ((WEATHER_OFF[lv] > 0 || turboOn()) && t % 100 == 3) clearWeather(w);
+            int al = eff(ARROW_LIFE[lv], 100);
+            if (al > 0 && t % 100 == 31) arrowReap(w, al);
         }
 
         @SubscribeEvent
         public void onLivingUpdate(LivingEvent.LivingUpdateEvent e) {
             int lv = level;
-            if (lv == 0 || TICK_DIST[lv] <= 0) return;
+            int td = turboOn() ? T_TICKDIST : TICK_DIST[lv];
+            int tlog = turboOn() ? 6 : TICK_LOG[lv];
+            if (lv == 0 || td <= 0) return;
             EntityLivingBase en = e.entityLiving;
             if (en.worldObj == null || en.worldObj.isRemote) return;
             if (en instanceof EntityPlayer || en instanceof IBossDisplayData) return;
@@ -865,10 +926,10 @@ public class OtmclMod {
             double n = nearestSq(en.worldObj, en.posX, en.posY, en.posZ);
             if (n == -2.0) return;
             int tier;
-            if (n < 0) tier = TICK_LOG[lv];
-            else tier = (int) (Math.sqrt(n) / TICK_DIST[lv]);
+            if (n < 0) tier = tlog;
+            else tier = (int) (Math.sqrt(n) / td);
             if (tier <= 0) return;
-            int iv = 1 << Math.min(tier, TICK_LOG[lv]);
+            int iv = 1 << Math.min(tier, tlog);
             if ((en.worldObj.getTotalWorldTime() + en.getEntityId()) % iv != 0) {
                 e.setCanceled(true);
                 skippedTicks++;
@@ -880,22 +941,25 @@ public class OtmclMod {
             int lv = level;
             if (lv == 0 || e.world.isRemote) return;
             Entity en = e.entity;
+            boolean tb = turboOn();
             if (en instanceof EntityItem) {
                 EntityItem it = (EntityItem) en;
-                if (it.lifespan > ITEM_LIFE[lv]) it.lifespan = ITEM_LIFE[lv];
+                int life = tb ? Math.min(ITEM_LIFE[lv], T_ITEMLIFE) : ITEM_LIFE[lv];
+                if (it.lifespan > life) it.lifespan = life;
                 int jl = JUNK_LIFE[lv];
+                if (tb) jl = jl > 0 ? Math.min(jl, 100) : 100;
                 if (jl > 0 && it.getEntityItem() != null) {
                     Object nm = Item.itemRegistry.getNameForObject(it.getEntityItem().getItem());
                     if (nm != null && JUNK.contains(nm.toString())) it.lifespan = Math.min(it.lifespan, jl);
                 }
-                int cap = ITEM_CAP[lv];
+                int cap = eff(ITEM_CAP[lv], 24);
                 if (cap > 0) {
                     List l = e.world.getEntitiesWithinAABB(EntityItem.class, it.boundingBox.expand(8.0, 4.0, 8.0));
                     if (l.size() > cap) it.lifespan = Math.min(it.lifespan, 200);
                 }
             } else if (en instanceof EntityXPOrb) {
                 EntityXPOrb orb = (EntityXPOrb) en;
-                int cap = XP_CAP[lv];
+                int cap = eff(XP_CAP[lv], 3);
                 if (cap > 0) {
                     List l = e.world.getEntitiesWithinAABB(EntityXPOrb.class, orb.boundingBox.expand(6.0, 3.0, 6.0));
                     if (l.size() >= cap) {
@@ -907,14 +971,15 @@ public class OtmclMod {
                         }
                     }
                 }
-            } else if (en instanceof EntityBat && BLACKLIST_LV[lv] >= 1) {
+            } else if (en instanceof EntityBat && (tb || BLACKLIST_LV[lv] >= 1)) {
                 e.setCanceled(true);
                 spawnsDenied++;
-            } else if (en instanceof EntitySquid && BLACKLIST_LV[lv] >= 2) {
+            } else if (en instanceof EntitySquid && (tb || BLACKLIST_LV[lv] >= 2)) {
                 e.setCanceled(true);
                 spawnsDenied++;
-            } else if (en instanceof EntityLiving && FOLLOW_CAP[lv] > 0 && !(en instanceof IBossDisplayData)) {
-                capFollow((EntityLiving) en, FOLLOW_CAP[lv]);
+            } else if (en instanceof EntityLiving && !(en instanceof IBossDisplayData)) {
+                int fc = eff(FOLLOW_CAP[lv], 10);
+                if (fc > 0) capFollow((EntityLiving) en, fc);
             }
         }
 
@@ -927,7 +992,7 @@ public class OtmclMod {
                 spawnsDenied++;
                 return;
             }
-            double p = SPAWN_DENY[lv] / 100.0;
+            double p = (turboOn() ? T_SPAWN : SPAWN_DENY[lv]) / 100.0;
             if (p <= 0) return;
             if (!(e.entityLiving instanceof IMob)) p = p / 2.0;
             if (RND.nextDouble() < p) {
@@ -941,7 +1006,7 @@ public class OtmclMod {
         public void onExplosionStart(ExplosionEvent.Start e) {
             int lv = level;
             if (lv == 0 || e.world.isRemote) return;
-            int cap = EXPL_CAP[lv];
+            int cap = eff(EXPL_CAP[lv], 3);
             if (cap > 0 && ++explThisTick > cap) {
                 e.setCanceled(true);
                 explosionsCut++;
@@ -952,7 +1017,7 @@ public class OtmclMod {
         public void onAllowDespawn(LivingSpawnEvent.AllowDespawn e) {
             int lv = level;
             if (lv == 0 || e.world.isRemote) return;
-            int dd = DESPAWN_DIST[lv];
+            int dd = eff(DESPAWN_DIST[lv], 32);
             if (dd <= 0) return;
             if (!(e.entityLiving instanceof EntityLiving)) return;
             EntityLiving el = (EntityLiving) e.entityLiving;
@@ -1021,10 +1086,10 @@ public class OtmclMod {
             int lv = level;
             if (lv == 0) return false;
             double d = x * x + y * y + z * z;
-            double r = CULL_DYN[lv];
+            double r = turboOn() ? T_DYN : CULL_DYN[lv];
             if (r > 0 && d > r * r) return true;
-            int fc = FRAME_DYN[lv];
-            return fc > 0 && ++frameDyn > fc && d > 64.0; // C11: passou do limite do frame, so as >8 blocos saem
+            int fc = turboOn() ? T_FRAME_DYN : FRAME_DYN[lv];
+            return fc > 0 && ++frameDyn > fc && d > 36.0; // C11: passou do limite do frame, so as >6 blocos saem
         }
 
         @Override
@@ -1040,7 +1105,7 @@ public class OtmclMod {
         public void doRenderShadowAndFire(Entity e, double x, double y, double z, float yaw, float pt) {
             int lv = level;
             if (lv > 0) {
-                double r = CULL_DYN[lv];
+                double r = turboOn() ? T_DYN : CULL_DYN[lv];
                 if (r > 0 && x * x + y * y + z * z > r * r) return;
             }
             inner.doRenderShadowAndFire(e, x, y, z, yaw, pt);
@@ -1065,13 +1130,18 @@ public class OtmclMod {
             int lv = level;
             if (lv > 0) {
                 double d = x * x + y * y + z * z;
-                double r = CULL_TE[lv];
+                boolean tb = turboOn();
+                double r = tb ? T_TE : CULL_TE[lv];
                 if (r > 0 && d > r * r) {
                     cullTe++;
                     return;
                 }
-                int fc = FRAME_TE[lv];
-                if (fc > 0 && ++frameTe > fc && d > 100.0) { // C11
+                if (tb && turboNoTe && d > 9.0) {
+                    cullTe++;
+                    return;
+                }
+                int fc = tb ? T_FRAME_TE : FRAME_TE[lv];
+                if (fc > 0 && ++frameTe > fc && d > 36.0) { // C11
                     cullTe++;
                     return;
                 }
@@ -1091,7 +1161,7 @@ public class OtmclMod {
         public void addEffect(EntityFX fx) {
             int lv = level;
             if (lv > 0) {
-                int drop = PART_DROP[lv];
+                int drop = turboOn() ? 100 : PART_DROP[lv];
                 if (drop > 0 && RND.nextInt(100) < drop) {
                     partDropped++;
                     return;
@@ -1126,7 +1196,8 @@ public class OtmclMod {
         boolean wrapped = false;
         boolean captured = false;
         boolean animKilled = false;
-        boolean oFancy, oClouds, oBobbing, oSnooper;
+        boolean oFancy, oClouds, oBobbing, oSnooper, oAdv;
+        float oFov;
         int oAO, oParticles, oRender;
         int partTick = 0;
         int lowFps = 0;
@@ -1141,24 +1212,49 @@ public class OtmclMod {
             if (lv == 0) return;
             if (e.entity instanceof EntityPlayer || e.entity instanceof IBossDisplayData) return;
             double d = e.x * e.x + e.y * e.y + e.z * e.z;
-            double r = CULL_LIVING[lv];
+            double r = turboOn() ? T_LIVING : CULL_LIVING[lv];
             if (r > 0 && d > r * r) {
                 e.setCanceled(true);
                 cullLiving++;
                 return;
             }
-            int fc = FRAME_LIVING[lv];
-            if (fc > 0 && ++frameLiving > fc && d > 256.0) { // C11: acima do limite, so as >16 blocos saem
+            int fc = turboOn() ? T_FRAME_LIVING : FRAME_LIVING[lv];
+            if (fc > 0 && ++frameLiving > fc && d > 100.0) { // C11: acima do limite, so as >10 blocos saem
                 e.setCanceled(true);
                 cullLiving++;
             }
+        }
+
+        /** Turbo: no CLIENTE, entidades longe atualizam 1 a cada 4 ticks (o cliente tambem simula todos os mobs). */
+        @SubscribeEvent
+        public void onClientLiving(LivingEvent.LivingUpdateEvent e) {
+            if (!turboOn() || !turboClientTick) return;
+            EntityLivingBase en = e.entityLiving;
+            if (en.worldObj == null || !en.worldObj.isRemote) return;
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.thePlayer == null || en instanceof EntityPlayer || en instanceof IBossDisplayData) return;
+            double r = T_LIVING * 2.0;
+            if (en.getDistanceSqToEntity(mc.thePlayer) > r * r && (en.worldObj.getTotalWorldTime() + en.getEntityId()) % 4 != 0) {
+                e.setCanceled(true);
+            }
+        }
+
+        /** Turbo: nao desenha a mao nem o contorno do bloco. */
+        @SubscribeEvent
+        public void onHand(RenderHandEvent e) {
+            if (turboOn() && turboHand) e.setCanceled(true);
+        }
+
+        @SubscribeEvent
+        public void onHighlight(DrawBlockHighlightEvent e) {
+            if (turboOn() && turboHand) e.setCanceled(true);
         }
 
         @SubscribeEvent
         public void onNameTags(RenderLivingEvent.Specials.Pre e) {
             int lv = level;
             if (lv == 0) return;
-            int m = NAMETAG[lv];
+            int m = turboOn() ? 2 : NAMETAG[lv];
             if (m == 0) return;
             double d = e.x * e.x + e.y * e.y + e.z * e.z;
             if (m >= 2 || d > 144.0) e.setCanceled(true);
@@ -1298,13 +1394,13 @@ public class OtmclMod {
                 mc.effectRenderer = new ThrottledFx(mc.theWorld, mc.renderEngine);
             }
             int lv = level;
-            if (appliedLevel != lv) applyClient(mc, lv);
-            if (lastProv != mc.theWorld.provider || skyLevel != lv) {
+            if (appliedLevel != lv + (turboOn() ? 10 : 0)) applyClient(mc, lv);
+            if (lastProv != mc.theWorld.provider || skyLevel != lv + (turboOn() ? 10 : 0)) {
                 applySky(mc, lv);
                 lastProv = mc.theWorld.provider;
-                skyLevel = lv;
+                skyLevel = lv + (turboOn() ? 10 : 0);
             }
-            if (lv >= 4) {
+            if (lv >= 4 || turboOn()) {
                 mc.theWorld.setRainStrength(0.0F);
                 mc.theWorld.setThunderStrength(0.0F);
             }
@@ -1334,6 +1430,8 @@ public class OtmclMod {
                 oAO = gs.ambientOcclusion;
                 oParticles = gs.particleSetting;
                 oRender = gs.renderDistanceChunks;
+                oAdv = gs.advancedOpengl;
+                oFov = gs.fovSetting;
             }
             if (lv == 0) {
                 gs.fancyGraphics = oFancy;
@@ -1343,16 +1441,22 @@ public class OtmclMod {
                 gs.ambientOcclusion = oAO;
                 gs.particleSetting = oParticles;
                 gs.renderDistanceChunks = oRender;
+                gs.advancedOpengl = oAdv;
+                gs.fovSetting = oFov;
             } else {
+                boolean tb = turboOn();
                 gs.clouds = false;
                 gs.snooperEnabled = false;
-                gs.fancyGraphics = lv >= 2 ? false : oFancy;
-                gs.ambientOcclusion = lv >= 3 ? 0 : (lv == 2 ? Math.min(oAO, 1) : oAO);
-                gs.particleSetting = Math.max(oParticles, PART_MODE[lv]);
-                gs.renderDistanceChunks = Math.max(2, Math.min(oRender, RD_CAP[lv]));
-                gs.viewBobbing = lv >= 5 ? false : oBobbing;
+                gs.advancedOpengl = false; // oclusao por query costuma pesar em GL4ES
+                gs.fancyGraphics = (lv >= 2 || tb) ? false : oFancy;
+                gs.ambientOcclusion = (lv >= 3 || tb) ? 0 : (lv == 2 ? Math.min(oAO, 1) : oAO);
+                gs.particleSetting = tb ? 2 : Math.max(oParticles, PART_MODE[lv]);
+                gs.renderDistanceChunks = Math.max(2, Math.min(oRender, tb ? T_RD : RD_CAP[lv]));
+                gs.viewBobbing = (lv >= 5 || tb) ? false : oBobbing;
+                gs.fovSetting = (tb && T_FOV > 0) ? Math.min(oFov, (float) T_FOV) : oFov;
             }
-            if (lv > 0 && ANIM_KILL[lv] > 0) {
+            boolean wantAnimOff = lv > 0 && (ANIM_KILL[lv] > 0 || turboOn());
+            if (wantAnimOff) {
                 if (!animKilled) {
                     killAnimations(mc);
                     animKilled = true;
@@ -1362,7 +1466,7 @@ public class OtmclMod {
                 mc.refreshResources();
             }
             mc.renderGlobal.loadRenderers();
-            appliedLevel = lv;
+            appliedLevel = lv + (turboOn() ? 10 : 0);
         }
 
         void killAnimations(Minecraft mc) {
@@ -1377,7 +1481,7 @@ public class OtmclMod {
 
         void applySky(Minecraft mc, int lv) {
             WorldProvider p = mc.theWorld.provider;
-            int mode = lv == 0 ? 0 : SKY_MODE[lv];
+            int mode = lv == 0 ? 0 : (turboOn() ? 2 : SKY_MODE[lv]);
             if (p.getWeatherRenderer() == null || p.getWeatherRenderer() == NOOP) p.setWeatherRenderer(mode >= 1 ? NOOP : null);
             if (p.getCloudRenderer() == null || p.getCloudRenderer() == NOOP) p.setCloudRenderer(mode >= 1 ? NOOP : null);
             if (p.getSkyRenderer() == null || p.getSkyRenderer() == NOOP) p.setSkyRenderer(mode >= 2 ? NOOP : null);
@@ -1388,8 +1492,8 @@ public class OtmclMod {
             Minecraft mc = Minecraft.getMinecraft();
             if (!mc.gameSettings.showDebugInfo) return;
             e.left.add("");
-            e.left.add("[OTMCL] nivel " + NAME[level] + (auto ? " (auto)" : "") + " | FPS " + fps + " | render "
-                + mc.gameSettings.renderDistanceChunks + " | ocultos/s " + cullPerSec);
+            e.left.add("[OTMCL] nivel " + NAME[level] + (auto ? " (auto)" : "") + (turboOn() ? " + TURBO" : "") + " | FPS " + fps
+                + " | render " + mc.gameSettings.renderDistanceChunks + " | ocultos/s " + cullPerSec);
             e.left.add("[OTMCL] mspt " + String.format("%.1f", msptAvg) + " | ticks pulados/s " + skippedPerSec
                 + " | TE dormindo " + totalSleeping() + " | particulas barradas " + partDropped);
         }
@@ -1402,7 +1506,7 @@ public class OtmclMod {
     }
 
     // ============================================================================================
-    // COMANDO /otmcl
+    // COMANDO /otmcl (e /otm)
     // ============================================================================================
     public static class CmdOtmcl extends CommandBase {
         @Override
@@ -1411,8 +1515,13 @@ public class OtmclMod {
         }
 
         @Override
+        public List getCommandAliases() {
+            return Arrays.asList("otm");
+        }
+
+        @Override
         public String getCommandUsage(ICommandSender s) {
-            return "/otmcl <0-5> | auto | status | perfil | limpar | ajuda";
+            return "/otmcl <0-5> | turbo | auto | status | perfil | limpar | ajuda";
         }
 
         @Override
@@ -1433,12 +1542,12 @@ public class OtmclMod {
         @Override
         public void processCommand(ICommandSender s, String[] a) {
             if (a.length == 0 || a[0].equalsIgnoreCase("ajuda") || a[0].equalsIgnoreCase("help")) {
-                say(s, "OtmclMod: /otmcl <0-5> muda o nivel | auto liga/desliga o modo automatico | status | perfil (o que pesa) | limpar");
+                say(s, "OtmclMod: /otmcl (ou /otm) <0-5> muda o nivel | turbo (corte extremo) | auto | status | perfil | limpar");
                 say(s, "Niveis: 0 vanilla, 1 leve, 2 medio, 3 forte, 4 extremo, 5 maximo. Tudo editavel em config/otmclmod.");
                 return;
             }
             if (a[0].equalsIgnoreCase("status")) {
-                say(s, "Nivel " + NAME[level] + (auto ? " (auto)" : "") + " | mspt " + String.format("%.1f", msptAvg)
+                say(s, "Nivel " + NAME[level] + (auto ? " (auto)" : "") + (turboOn() ? " + TURBO" : "") + " | mspt " + String.format("%.1f", msptAvg)
                     + " | FPS " + fps);
                 say(s, "Servidor: ticks pulados/s " + skippedPerSec + ", TE dormindo " + totalSleeping() + ", itens fundidos "
                     + itemsMerged + ", orbs fundidos " + orbsMerged);
@@ -1460,6 +1569,15 @@ public class OtmclMod {
             if (a[0].equalsIgnoreCase("limpar") || a[0].equalsIgnoreCase("clean")) {
                 pendingClean = true;
                 say(s, "Limpeza agendada: itens no chao, orbs de XP e flechas serao removidos no proximo tick do servidor.");
+                return;
+            }
+            if (a[0].equalsIgnoreCase("turbo")) {
+                turbo = !turbo;
+                saveState();
+                pendingApply = true;
+                say(s, "Modo TURBO " + (turbo ? "LIGADO" : "desligado") + (level == 0 ? " (precisa de nivel 1 ou mais: use /otmcl 5)" : "")
+                    + ". Render distance " + T_RD + ", entidades so ate " + T_LIVING + " blocos, itens ate " + T_DYN
+                    + ". O volume nao e alterado.");
                 return;
             }
             if (a[0].equalsIgnoreCase("auto")) {
