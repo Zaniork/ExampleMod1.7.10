@@ -34,12 +34,13 @@ import net.minecraft.world.World;
 import net.minecraftforge.client.event.DrawBlockHighlightEvent;
 import net.minecraftforge.client.event.EntityViewRenderEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
+import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderPlayerEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.living.LivingEvent;
 
-@Mod(modid = OmdMod.MODID, name = "OMD Performance", version = "3.0", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OmdMod.MODID, name = "OMD Performance", version = "4.2", acceptedMinecraftVersions = "[1.7.10]")
 public class OmdMod {
 
     public static final String MODID = "omd";
@@ -47,20 +48,16 @@ public class OmdMod {
 
     static boolean enabled = false;
 
-    // ========================================================================
-    // CONFIG
-    // ========================================================================
     static final int DIST = 12;
     static final int DIST_SQ = DIST * DIST;
 
     static final int PARTICLE_HARD_CAP = 5000;
     static final int PARTICLE_MAX_PER_FRAME = 200;
 
+    static final float FIXED_FOV = 70.0f;
+
     static Set<String> teWhitelist = new HashSet<String>();
 
-    // ========================================================================
-    // METRICAS
-    // ========================================================================
     static volatile int skippedPerSec    = 0;
     static volatile int culledPerSec     = 0;
     static volatile int particlesKilled  = 0;
@@ -129,7 +126,6 @@ public class OmdMod {
             }
         }
 
-        // ---- IA desligada >12b + tick adaptativo agressivo ----
         @SubscribeEvent
         public void onLivingUpdate(LivingEvent.LivingUpdateEvent e) {
             if (!enabled) return;
@@ -137,7 +133,6 @@ public class OmdMod {
             if (en == null || en.worldObj == null || en.worldObj.isRemote) return;
             if (en instanceof EntityPlayer) return;
             if (en instanceof IBossDisplayData) return;
-
             if (isProtected(en)) return;
             if (en.riddenByEntity != null || en.ridingEntity != null) return;
             if (en.hurtTime > 0 || en.deathTime > 0 || en.getHealth() <= 0f) return;
@@ -145,7 +140,6 @@ public class OmdMod {
             double minSq = nearestPlayerSq(en);
             if (minSq == Double.MAX_VALUE) return;
 
-            // IA off >12b
             if (en instanceof EntityLiving) {
                 EntityLiving el = (EntityLiving) en;
                 if (minSq > DIST_SQ) {
@@ -156,15 +150,12 @@ public class OmdMod {
                     el.moveForward = 0;
                     el.setJumping(false);
 
-                    // congela rotação
                     el.rotationYaw     = el.prevRotationYaw;
                     el.rotationPitch   = el.prevRotationPitch;
                     el.renderYawOffset = el.prevRenderYawOffset;
 
-                    // zera velocidade vertical
                     el.motionY = 0;
 
-                    // mob parado -> cancel tick inteiro
                     double dx = el.posX - el.prevPosX;
                     double dz = el.posZ - el.prevPosZ;
                     if (dx * dx + dz * dz < 0.0001) {
@@ -175,12 +166,11 @@ public class OmdMod {
                 }
             }
 
-            // tick adaptativo: 1/8, 1/16, 1/32
             int interval;
-            if (minSq <= DIST_SQ)                          interval = 1;
-            else if (minSq <= (DIST * 2) * (DIST * 2))     interval = 8;
-            else if (minSq <= (DIST * 4) * (DIST * 4))     interval = 16;
-            else                                            interval = 32;
+            if (minSq <= DIST_SQ)                      interval = 1;
+            else if (minSq <= (DIST * 2) * (DIST * 2)) interval = 8;
+            else if (minSq <= (DIST * 4) * (DIST * 4)) interval = 16;
+            else                                        interval = 32;
 
             if (interval > 1) {
                 long t = en.worldObj.getTotalWorldTime() + en.getEntityId();
@@ -212,7 +202,6 @@ public class OmdMod {
             return min;
         }
 
-        // ---- TE throttle ----
         @SubscribeEvent
         public void onWorldTick(TickEvent.WorldTickEvent e) {
             if (!enabled) return;
@@ -311,6 +300,10 @@ public class OmdMod {
 
         private int origRender = -1;
         private boolean origBobbing = true;
+        private boolean origClouds = true;
+        private boolean origFancy = true;
+        private int origAO = 2;
+        private float origFov = 70.0f;
 
         private static Field FX_FIELD = null;
         private static boolean FX_CHECKED = false;
@@ -335,6 +328,25 @@ public class OmdMod {
             }
         }
 
+        // ---- Mão em primeira pessoa off ----
+        @SubscribeEvent
+        public void onRenderHand(RenderHandEvent e) {
+            if (!enabled) return;
+            e.setCanceled(true);
+        }
+
+        // ---- Céu e vinheta off ----
+        @SubscribeEvent
+        public void onOverlayPre(RenderGameOverlayEvent.Pre e) {
+            if (!enabled) return;
+            RenderGameOverlayEvent.ElementType t = e.type;
+            if (t == RenderGameOverlayEvent.ElementType.SKY) {
+                e.setCanceled(true);
+            } else if (t == RenderGameOverlayEvent.ElementType.VIGNETTE) {
+                e.setCanceled(true);
+            }
+        }
+
         // ---- Culling principal ----
         @SubscribeEvent(priority = EventPriority.LOWEST)
         public void onRenderLiving(RenderLivingEvent.Pre e) {
@@ -342,19 +354,14 @@ public class OmdMod {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null || mc.thePlayer == null) return;
 
-            // você mesmo: nunca renderiza
             if (e.entity == mc.thePlayer) {
                 e.setCanceled(true);
                 return;
             }
 
-            // outros players: normal
             if (e.entity instanceof EntityPlayer) return;
-
-            // bosses: normal
             if (e.entity instanceof IBossDisplayData) return;
 
-            // mobs: culling distância + atrás
             double dSq = mc.thePlayer.getDistanceSqToEntity(e.entity);
             if (dSq > DIST_SQ) {
                 e.setCanceled(true);
@@ -368,9 +375,16 @@ public class OmdMod {
             }
         }
 
-        // ---- Nametag, HP bar, sombra: off pra todos ----
+        // ---- Nametag, HP bar, sombra off ----
         @SubscribeEvent
         public void onSpecials(RenderLivingEvent.Specials.Pre e) {
+            if (!enabled) return;
+            e.setCanceled(true);
+        }
+
+        // ---- Armadura e capa de outros players off ----
+        @SubscribeEvent
+        public void onRenderPlayerSpecials(RenderPlayerEvent.Specials.Pre e) {
             if (!enabled) return;
             e.setCanceled(true);
         }
@@ -398,6 +412,15 @@ public class OmdMod {
             e.density = 0.0f;
         }
 
+        // ---- Cor da névoa neutra ----
+        @SubscribeEvent
+        public void onFogColors(EntityViewRenderEvent.FogColors e) {
+            if (!enabled) return;
+            e.red   = 0.5f;
+            e.green = 0.5f;
+            e.blue  = 0.5f;
+        }
+
         private boolean isBehind(EntityPlayer player, Entity target) {
             Vec3 look = player.getLookVec();
             double dx = target.posX - player.posX;
@@ -410,7 +433,6 @@ public class OmdMod {
             return (dx * lx + dz * lz) < 0;
         }
 
-        // ---- Smart particle cleanup ----
         private void smartParticleCleanup() {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null || mc.thePlayer == null) return;
@@ -509,15 +531,29 @@ public class OmdMod {
             if (origRender < 0) {
                 origRender  = mc.gameSettings.renderDistanceChunks;
                 origBobbing = mc.gameSettings.viewBobbing;
+                origClouds  = mc.gameSettings.clouds;
+                origFancy   = mc.gameSettings.fancyGraphics;
+                origAO      = mc.gameSettings.ambientOcclusion;
+                origFov     = mc.gameSettings.fovSetting;
             }
 
             if (!enabled) {
                 if (origRender > 0) mc.gameSettings.renderDistanceChunks = origRender;
-                mc.gameSettings.viewBobbing = origBobbing;
+                mc.gameSettings.viewBobbing      = origBobbing;
+                mc.gameSettings.clouds           = origClouds;
+                mc.gameSettings.fancyGraphics    = origFancy;
+                mc.gameSettings.ambientOcclusion = origAO;
+                mc.gameSettings.fovSetting       = origFov;
+                mc.renderGlobal.loadRenderers();
                 return;
             }
 
-            mc.gameSettings.viewBobbing = false;
+            mc.gameSettings.viewBobbing      = false;
+            mc.gameSettings.clouds           = false;
+            mc.gameSettings.fancyGraphics    = false;
+            mc.gameSettings.ambientOcclusion = 0;
+            mc.gameSettings.fovSetting       = FIXED_FOV;
+            mc.renderGlobal.loadRenderers();
         }
     }
 
