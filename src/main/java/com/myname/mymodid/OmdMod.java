@@ -34,13 +34,12 @@ import net.minecraft.world.World;
 import net.minecraftforge.client.event.DrawBlockHighlightEvent;
 import net.minecraftforge.client.event.EntityViewRenderEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
-import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderPlayerEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.living.LivingEvent;
 
-@Mod(modid = OmdMod.MODID, name = "OMD Performance", version = "4.2", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = OmdMod.MODID, name = "OMD Performance", version = "4.4", acceptedMinecraftVersions = "[1.7.10]")
 public class OmdMod {
 
     public static final String MODID = "omd";
@@ -182,7 +181,6 @@ public class OmdMod {
         }
 
         private boolean isProtected(EntityLivingBase en) {
-            if (en.hasCustomNameTag()) return true;
             if (en instanceof EntityTameable) {
                 if (((EntityTameable) en).isTamed()) return true;
             }
@@ -328,25 +326,6 @@ public class OmdMod {
             }
         }
 
-        // ---- Mão em primeira pessoa off ----
-        @SubscribeEvent
-        public void onRenderHand(RenderHandEvent e) {
-            if (!enabled) return;
-            e.setCanceled(true);
-        }
-
-        // ---- Céu e vinheta off ----
-        @SubscribeEvent
-        public void onOverlayPre(RenderGameOverlayEvent.Pre e) {
-            if (!enabled) return;
-            RenderGameOverlayEvent.ElementType t = e.type;
-            if (t == RenderGameOverlayEvent.ElementType.SKY) {
-                e.setCanceled(true);
-            } else if (t == RenderGameOverlayEvent.ElementType.VIGNETTE) {
-                e.setCanceled(true);
-            }
-        }
-
         // ---- Culling principal ----
         @SubscribeEvent(priority = EventPriority.LOWEST)
         public void onRenderLiving(RenderLivingEvent.Pre e) {
@@ -378,13 +357,6 @@ public class OmdMod {
         // ---- Nametag, HP bar, sombra off ----
         @SubscribeEvent
         public void onSpecials(RenderLivingEvent.Specials.Pre e) {
-            if (!enabled) return;
-            e.setCanceled(true);
-        }
-
-        // ---- Armadura e capa de outros players off ----
-        @SubscribeEvent
-        public void onRenderPlayerSpecials(RenderPlayerEvent.Specials.Pre e) {
             if (!enabled) return;
             e.setCanceled(true);
         }
