@@ -27,8 +27,8 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
+import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.Gui;
 import net.minecraft.client.particle.EffectRenderer;
 import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.entity.Render;
@@ -79,7 +79,6 @@ import net.minecraft.world.gen.ChunkProviderServer;
 import net.minecraftforge.client.event.DrawBlockHighlightEvent;
 import net.minecraftforge.client.event.EntityViewRenderEvent;
 import net.minecraftforge.client.event.RenderGameOverlayEvent;
-import net.minecraftforge.client.event.RenderHandEvent;
 import net.minecraftforge.client.event.RenderLivingEvent;
 import net.minecraftforge.client.event.RenderPlayerEvent;
 import net.minecraftforge.client.event.RenderWorldLastEvent;
@@ -95,19 +94,27 @@ import net.minecraftforge.event.terraingen.PopulateChunkEvent;
 import net.minecraftforge.event.world.ExplosionEvent;
 
 /**
- * UBM - Ultimate Boost Mod (arquivo único, sem ASM)
+ * UBM - Ultimate Boost Mod
  *
- * Comando: /ubm 0 (desliga) | /ubm 1 (liga)
+ *   /ubm 0  | /ubm 1   -> otimizacao base (leve)
+ *   /ubm2 0 | /ubm2 1  -> 4 metodos avancados juntos:
+ *
+ *      [1] QVSO - Vertical Y-band priority + tick score
+ *      [2] SPR  - Smart Pipeline Reduction (render/budget dinamico)
+ *      [3] OCC  - Occlusion Culling de entidades por raycast
+ *      [4] DFB  - Dynamic Frame Budget (reacao por frame)
  */
-@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "1.2", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "2.0", acceptedMinecraftVersions = "[1.7.10]")
 public class UbmMod {
 
     public static final String MODID = "ubm";
     public static UbmMod instance;
 
-    static volatile boolean enabled = false;
+    static volatile boolean enabled = false;      // /ubm 1
+    static volatile boolean enabled2 = false;     // /ubm2 1
     static Configuration cfg;
 
+    // ================= IOAB / UBM base =================
     static final int IOAB_BASE_BUDGET = 800;
     static final int IOAB_MIN_BUDGET  = 200;
     static final int IOAB_MAX_BUDGET  = 2400;
@@ -139,10 +146,6 @@ public class UbmMod {
     static final int TNT_CAP        = 24;
     static final int PROJ_CAP       = 40;
 
-    static final int CULL_LIVING   = 64;
-    static final int CULL_DYN      = 48;
-    static final int CULL_TE       = 32;
-    static final int NAME_DIST     = 8;
     static final int PART_DROP_PCT = 50;
     static final int PART_DIST     = 20;
     static final int RD_MAX        = 3;
@@ -152,6 +155,25 @@ public class UbmMod {
 
     static final double CUBE_MAX_DIST = 64.0 * 64.0;
 
+    // ================= QVSO =================
+    static final int Y_BAND = 32;         // altura de cada fatia
+    static final int Y_FAR_BANDS = 3;     // se >= esta distancia vertical, tick muito raro
+
+    // ================= SPR (dinamico) =================
+    static final int SPR_MIN_RD = 2;      // render distance minima
+    static final int SPR_LOW_FPS = 40;
+    static final int SPR_HIGH_FPS = 90;
+    static final int SPR_INTERVAL = 60;   // ticks (3s) entre ajustes
+
+    // ================= OCC =================
+    static final double OCC_MIN_DIST = 8.0;    // nao testa abaixo disso
+    static final double OCC_MAX_DIST = 48.0;   // nao testa acima disso
+    static final int OCC_RAY_STEP    = 1;      // 1 bloco por passo
+
+    // ================= DFB =================
+    static final long DFB_FAST_MS = 10;
+    static final long DFB_SLOW_MS = 22;
+
     static final Random RND = new Random();
     static final UUID FOLLOW_ID = UUID.fromString("0b3d5a7e-1f2c-4d6b-9e8a-7c5b3a1f0d2e");
     static final Set<String> JUNK = new HashSet<String>();
@@ -159,24 +181,28 @@ public class UbmMod {
     static volatile int fps = 0;
     static volatile double mspt = 0;
     static int skippedPerSec = 0, skippedThisSec = 0;
-    static int cullPerSec = 0, cullLiving = 0, cullDyn = 0, cullTe = 0;
+    static int cullPerSec = 0, cullLiving = 0, occCulled = 0;
     static int itemsMerged = 0, orbsMerged = 0, spawnsDenied = 0, despawned = 0;
     static int mobCapKilled = 0, chunksReaped = 0, teSlept = 0, genDenied = 0;
     static int partCleared = 0, soundsBarred = 0, partDropped = 0;
     static int itemsFarKilled = 0, orbsFarKilled = 0, projKilled = 0;
     static int slimeDenied = 0, tntDenied = 0, followCut = 0, dimsUnloaded = 0;
-    static int frameLiving = 0, frameDyn = 0, frameTe = 0;
     static int currentBudget = IOAB_BASE_BUDGET;
     static int processedThisTick = 0;
     static int lowMsptStreak = 0, highMsptStreak = 0;
+    static int sprAdjustCounter = 0;
+    static int yFarCulled = 0, yMidCulled = 0;
 
     public UbmMod() { instance = this; }
 
     public static void setEnabled(boolean b) { enabled = b; }
+    public static void setEnabled2(boolean b) { enabled2 = b; }
     public static boolean isEnabled() { return enabled; }
+    public static boolean isEnabled2() { return enabled2; }
+    public static boolean any() { return enabled || enabled2; }
 
     // ================= IOAB =================
-    static class Score { int value = 50; int cooldown = 0; }
+    static class Score { int value = 50; int cooldown = 0; int debt = 0; }
     static final Map<EntityLivingBase, Score> SCORES = new WeakHashMap<EntityLivingBase, Score>();
 
     static int computeScore(EntityLivingBase en, double distSq, float lookDot) {
@@ -255,6 +281,40 @@ public class UbmMod {
     }
 
     static double sq(double v) { return v * v; }
+
+    // ================= OCC — visibilidade por raycast =================
+    // Retorna true se a entidade esta visivel (nao tem bloco solido entre camera e entidade)
+    static boolean isVisible(World world, double cx, double cy, double cz, Entity target) {
+        if (world == null || target == null) return true;
+
+        double dx = target.posX - cx;
+        double dy = (target.posY + target.height * 0.5) - cy;
+        double dz = target.posZ - cz;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist <= OCC_MIN_DIST) return true;
+        if (dist > OCC_MAX_DIST) return true;
+
+        double nx = dx / dist;
+        double ny = dy / dist;
+        double nz = dz / dist;
+
+        double step = OCC_RAY_STEP;
+        int maxSteps = (int) (dist / step);
+
+        for (int i = 1; i < maxSteps; i++) {
+            double t = i * step;
+            int bx = (int) Math.floor(cx + nx * t);
+            int by = (int) Math.floor(cy + ny * t);
+            int bz = (int) Math.floor(cz + nz * t);
+
+            if (by < 0 || by > 255) continue;
+            if (!world.blockExists(bx, by, bz)) continue;
+            Block b = world.getBlock(bx, by, bz);
+            if (b == null) continue;
+            if (b.isOpaqueCube()) return false;
+        }
+        return true;
+    }
 
     // ================= TE =================
     static final Map<Integer, List<TileEntity>> SLEEP = new HashMap<Integer, List<TileEntity>>();
@@ -575,8 +635,10 @@ public class UbmMod {
         WorldServer w0 = srv.worldServerForDimension(0);
         if (w0 == null) return;
         GameRules gr = w0.getGameRules();
-        gr.setOrCreateGameRule("randomTickSpeed", enabled ? "1" : "3");
-        gr.setOrCreateGameRule("doFireTick", enabled ? "false" : "true");
+        // regra = qualquer modo ativo
+        boolean active = any();
+        gr.setOrCreateGameRule("randomTickSpeed", active ? "1" : "3");
+        gr.setOrCreateGameRule("doFireTick", active ? "false" : "true");
         for (WorldServer w : srv.worldServers) if (w != null) wake(w);
     }
 
@@ -585,7 +647,8 @@ public class UbmMod {
     public void preInit(FMLPreInitializationEvent e) {
         cfg = new Configuration(e.getSuggestedConfigurationFile());
         cfg.load();
-        enabled = cfg.getBoolean("ativo", "geral", false, "Liga/desliga tudo");
+        enabled = cfg.getBoolean("ativo", "geral", false, "Liga/desliga UBM base");
+        enabled2 = cfg.getBoolean("ativo2", "geral", false, "Liga/desliga metodos avancados");
         String[] junk = cfg.getStringList("itens_lixo", "geral",
             new String[] { "minecraft:cobblestone", "minecraft:dirt", "minecraft:gravel",
                 "minecraft:netherrack", "minecraft:rotten_flesh", "minecraft:wheat_seeds",
@@ -613,11 +676,13 @@ public class UbmMod {
     @Mod.EventHandler
     public void serverStart(FMLServerStartingEvent e) {
         e.registerServerCommand(new CmdUbm());
+        e.registerServerCommand(new CmdUbm2());
     }
 
     static void saveState() {
         if (cfg == null) return;
         cfg.get("geral", "ativo", false).set(enabled);
+        cfg.get("geral", "ativo2", false).set(enabled2);
         cfg.save();
     }
 
@@ -640,7 +705,7 @@ public class UbmMod {
             double ms = (System.nanoTime() - tickStart) / 1000000.0;
             mspt = mspt * 0.9 + ms * 0.1;
 
-            if (enabled) {
+            if (any()) {
                 if (mspt > 42.0) {
                     highMsptStreak++;
                     lowMsptStreak = 0;
@@ -673,7 +738,7 @@ public class UbmMod {
         public void onWorldTick(TickEvent.WorldTickEvent e) {
             if (e.world.isRemote || !(e.world instanceof WorldServer)) return;
             if (e.phase != TickEvent.Phase.START) return;
-            if (!enabled) return;
+            if (!any()) return;
             try {
                 WorldServer w = (WorldServer) e.world;
                 long t = w.getTotalWorldTime();
@@ -694,9 +759,10 @@ public class UbmMod {
             } catch (Throwable t) { }
         }
 
+        // ========== QVSO integrado no tick ==========
         @SubscribeEvent
         public void onLivingUpdate(LivingEvent.LivingUpdateEvent e) {
-            if (!enabled) return;
+            if (!any()) return;
             EntityLivingBase en = e.entityLiving;
             if (en == null || en.worldObj == null || en.worldObj.isRemote) return;
             if (en instanceof EntityPlayer) return;
@@ -730,15 +796,46 @@ public class UbmMod {
                 if (interval > 32) interval = 32;
             }
 
+            // ---------- QVSO: Y-band ----------
+            if (enabled2) {
+                int eBand = ((int) Math.floor(en.posY)) / Y_BAND;
+                List players = en.worldObj.playerEntities;
+                if (players != null && !players.isEmpty()) {
+                    int pBand = Integer.MIN_VALUE;
+                    for (int i = 0; i < players.size(); i++) {
+                        Object o = players.get(i);
+                        if (!(o instanceof EntityPlayer)) continue;
+                        EntityPlayer p = (EntityPlayer) o;
+                        int pb = ((int) Math.floor(p.posY)) / Y_BAND;
+                        if (pBand == Integer.MIN_VALUE || Math.abs(pb - eBand) < Math.abs(pBand - eBand)) {
+                            pBand = pb;
+                        }
+                    }
+                    int bandDist = Math.abs(eBand - pBand);
+                    if (bandDist >= Y_FAR_BANDS) {
+                        interval = Math.max(interval, 32);
+                        yFarCulled++;
+                    } else if (bandDist == Y_FAR_BANDS - 1) {
+                        interval = Math.max(interval, 8);
+                    } else if (bandDist == 1) {
+                        interval = Math.max(interval, 2);
+                        yMidCulled++;
+                    }
+                }
+            }
+
             if (interval > 1 && (worldTick + en.getEntityId()) % interval != 0L) {
                 e.setCanceled(true);
                 skippedThisSec++;
+                if (enabled2) sc.debt += (interval - 1);
+            } else {
+                sc.debt = 0;
             }
         }
 
         @SubscribeEvent
         public void onJoin(EntityJoinWorldEvent e) {
-            if (!enabled || e.world.isRemote) return;
+            if (!any() || e.world.isRemote) return;
             try {
                 Entity en = e.entity;
                 if (en instanceof EntityItem) {
@@ -778,9 +875,10 @@ public class UbmMod {
 
         @SubscribeEvent
         public void onCheckSpawn(LivingSpawnEvent.CheckSpawn e) {
-            if (!enabled || e.world.isRemote) return;
+            if (!any() || e.world.isRemote) return;
             try {
                 double p = SPAWN_DENY_PCT / 100.0;
+                if (enabled2) p = Math.min(1.0, p * 1.5);  // mais agressivo em modo 2
                 if (!(e.entityLiving instanceof IMob)) p = p / 2.0;
                 if (RND.nextDouble() < p) { e.setResult(Event.Result.DENY); spawnsDenied++; }
             } catch (Throwable t) { }
@@ -788,21 +886,23 @@ public class UbmMod {
 
         @SubscribeEvent
         public void onExplosionStart(ExplosionEvent.Start e) {
-            if (!enabled || e.world.isRemote) return;
+            if (!any() || e.world.isRemote) return;
             try {
-                if (++explThisTick > EXPL_PER_TICK) e.setCanceled(true);
+                int cap = enabled2 ? 3 : EXPL_PER_TICK;
+                if (++explThisTick > cap) e.setCanceled(true);
             } catch (Throwable t) { }
         }
 
         @SubscribeEvent
         public void onAllowDespawn(LivingSpawnEvent.AllowDespawn e) {
-            if (!enabled || e.world.isRemote) return;
+            if (!any() || e.world.isRemote) return;
             try {
                 if (!(e.entityLiving instanceof EntityLiving)) return;
                 EntityLiving el = (EntityLiving) e.entityLiving;
                 double n = nearestPlayerSq(e.world, el.posX, el.posY, el.posZ);
                 if (n < 0) return;
-                if (n > sq(DESPAWN_DIST)) { e.setResult(Event.Result.ALLOW); despawned++; }
+                double lim = enabled2 ? sq(DESPAWN_DIST * 0.75) : sq(DESPAWN_DIST);
+                if (n > lim) { e.setResult(Event.Result.ALLOW); despawned++; }
             } catch (Throwable t) { }
         }
     }
@@ -820,7 +920,7 @@ public class UbmMod {
 
         @SubscribeEvent
         public void onDecorate(DecorateBiomeEvent.Decorate e) {
-            if (!enabled) return;
+            if (!any()) return;
             try {
                 String n = e.type.name();
                 if (n.equals("LAKE") || D2.contains(n)) { e.setResult(Event.Result.DENY); genDenied++; }
@@ -829,7 +929,7 @@ public class UbmMod {
 
         @SubscribeEvent
         public void onPopulate(PopulateChunkEvent.Populate e) {
-            if (!enabled) return;
+            if (!any()) return;
             try {
                 if (P1.contains(e.type.name())) { e.setResult(Event.Result.DENY); genDenied++; }
             } catch (Throwable t) { }
@@ -840,51 +940,33 @@ public class UbmMod {
     @SideOnly(Side.CLIENT)
     public static class NoRender extends Render {
         final Render inner;
-
-        public NoRender() {
-            this.inner = null;
-            try { setRenderManager(RenderManager.instance); } catch (Throwable t) { }
-        }
-
-        public NoRender(Render inner) {
-            this.inner = inner;
-            try { setRenderManager(RenderManager.instance); } catch (Throwable t) { }
-        }
-
-        @Override
-        public void doRender(Entity e, double x, double y, double z, float yaw, float pt) { }
-
-        @Override
-        public void doRenderShadowAndFire(Entity e, double x, double y, double z, float yaw, float pt) { }
-
-        @Override
-        protected ResourceLocation getEntityTexture(Entity e) {
-            try { return TextureMap.locationBlocksTexture; } catch (Throwable t) { return null; }
-        }
+        public NoRender() { this.inner = null; try { setRenderManager(RenderManager.instance); } catch (Throwable t) { } }
+        public NoRender(Render inner) { this.inner = inner; try { setRenderManager(RenderManager.instance); } catch (Throwable t) { } }
+        @Override public void doRender(Entity e, double x, double y, double z, float yaw, float pt) { }
+        @Override public void doRenderShadowAndFire(Entity e, double x, double y, double z, float yaw, float pt) { }
+        @Override protected ResourceLocation getEntityTexture(Entity e) { try { return TextureMap.locationBlocksTexture; } catch (Throwable t) { return null; } }
     }
 
     @SideOnly(Side.CLIENT)
     public static class NoTesr extends TileEntitySpecialRenderer {
         final TileEntitySpecialRenderer inner;
-
         public NoTesr() { this.inner = null; }
         public NoTesr(TileEntitySpecialRenderer inner) { this.inner = inner; }
-
-        @Override
-        public void renderTileEntityAt(TileEntity te, double x, double y, double z, float pt) { }
+        @Override public void renderTileEntityAt(TileEntity te, double x, double y, double z, float pt) { }
     }
 
     @SideOnly(Side.CLIENT)
     public static class ThrottledFx extends EffectRenderer {
         public ThrottledFx(World w, TextureManager tm) { super(w, tm); }
-
         @Override
         public void addEffect(net.minecraft.client.particle.EntityFX fx) {
-            if (enabled) {
+            if (any()) {
                 try {
-                    if (RND.nextInt(100) < PART_DROP_PCT) { partDropped++; return; }
+                    int pct = enabled2 ? 75 : PART_DROP_PCT;  // mais agressivo em modo 2
+                    if (RND.nextInt(100) < pct) { partDropped++; return; }
+                    int dist = enabled2 ? 12 : PART_DIST;
                     Entity v = Minecraft.getMinecraft().renderViewEntity;
-                    if (v != null && fx.getDistanceSqToEntity(v) > sq(PART_DIST)) { partDropped++; return; }
+                    if (v != null && fx.getDistanceSqToEntity(v) > sq(dist)) { partDropped++; return; }
                 } catch (Throwable t) { }
             }
             super.addEffect(fx);
@@ -901,6 +983,13 @@ public class UbmMod {
         boolean captured = false;
         int lastEnabled = -1;
 
+        // DFB: medicao por frame
+        long lastFrameStart = 0;
+        long lastFrameMs = 16;
+        int dfbSlowStreak = 0;
+        int dfbFastStreak = 0;
+        int dfbAdjustCooldown = 0;
+
         boolean oFancy, oClouds, oBobbing, oSnooper, oAdv, oVsync;
         float oFov;
         int oAO, oParticles, oRender, oMip, oAni, oLimit;
@@ -908,80 +997,68 @@ public class UbmMod {
         static Field FX_LAYERS = null;
         static boolean FX_CHECKED = false;
 
-        @SubscribeEvent(priority = EventPriority.HIGHEST)
-        public void onOverlayPre(RenderGameOverlayEvent.Pre e) {
-            if (!enabled) return;
-            if (e.type == RenderGameOverlayEvent.ElementType.TEXT) return;
-            e.setCanceled(true);
-        }
-
         @SubscribeEvent
-        public void onOverlayPost(RenderGameOverlayEvent.Post e) {
-            if (!enabled) return;
-            if (e.type != RenderGameOverlayEvent.ElementType.ALL) return;
-            try {
-                Minecraft mc = Minecraft.getMinecraft();
-                if (mc == null || mc.thePlayer == null) return;
-                EntityPlayer p = mc.thePlayer;
-                int w = e.resolution.getScaledWidth();
-                float hp = Math.max(0, Math.min(1, p.getHealth() / p.getMaxHealth()));
-                float fd = Math.max(0, Math.min(1, p.getFoodStats().getFoodLevel() / 20.0f));
-                Gui.drawRect(4, 4, 104, 11, 0xFF000000);
-                Gui.drawRect(4, 4, 4 + (int)(100 * hp), 11, hp > 0.5f ? 0xFF00CC00 : (hp > 0.25f ? 0xFFCCAA00 : 0xFFCC0000));
-                Gui.drawRect(4, 14, 104, 21, 0xFF000000);
-                Gui.drawRect(4, 14, 4 + (int)(100 * fd), 21, 0xFFFF8800);
-                Gui.drawRect(w - 104, 4, w - 4, 11, 0xFF000000);
-                Gui.drawRect(w - 104, 4, w - 104 + (int)(100 * p.experience), 11, 0xFFCC00FF);
-                mc.fontRenderer.drawStringWithShadow("Lv " + p.experienceLevel, w - 130, 4, 0xFFFFFFFF);
-            } catch (Throwable t) { }
+        public void onHighlight(DrawBlockHighlightEvent e) {
+            if (any()) e.setCanceled(true);
         }
 
-        @SubscribeEvent public void onHand(RenderHandEvent e) { if (enabled) e.setCanceled(true); }
-        @SubscribeEvent public void onHighlight(DrawBlockHighlightEvent e) { if (enabled) e.setCanceled(true); }
-
+        // ========== OCC + culling de mobs ==========
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onRenderLiving(RenderLivingEvent.Pre e) {
-            if (!enabled) return;
+            if (!any()) return;
             Minecraft mc = Minecraft.getMinecraft();
-            if (mc == null) return;
+            if (mc == null || mc.thePlayer == null) return;
             if (e.entity == mc.thePlayer) return;
+
+            // OCC: so no modo 2
+            if (enabled2) {
+                double cxe = mc.thePlayer.posX;
+                double cye = mc.thePlayer.posY + mc.thePlayer.getEyeHeight();
+                double cze = mc.thePlayer.posZ;
+                if (!isVisible(mc.theWorld, cxe, cye, cze, e.entity)) {
+                    e.setCanceled(true);
+                    occCulled++;
+                    return;
+                }
+            }
+
             e.setCanceled(true);
             cullLiving++;
         }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onSpecials(RenderLivingEvent.Specials.Pre e) {
-            if (enabled) e.setCanceled(true);
+            if (any()) e.setCanceled(true);
         }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onPlayer(RenderPlayerEvent.Pre e) {
-            if (!enabled) return;
+            if (!any()) return;
             Minecraft mc = Minecraft.getMinecraft();
             if (mc != null && e.entityPlayer == mc.thePlayer) e.setCanceled(true);
         }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onPlayerSpecials(RenderPlayerEvent.Specials.Pre e) {
-            if (enabled) e.setCanceled(true);
+            if (any()) e.setCanceled(true);
         }
 
-        @SubscribeEvent public void onFogDensity(EntityViewRenderEvent.FogDensity e) { if (enabled) e.density = 0f; }
+        @SubscribeEvent public void onFogDensity(EntityViewRenderEvent.FogDensity e) { if (any()) e.density = 0f; }
         @SubscribeEvent public void onFogColors(EntityViewRenderEvent.FogColors e) {
-            if (!enabled) return;
+            if (!any()) return;
             e.red = 0.5f; e.green = 0.5f; e.blue = 0.5f;
         }
 
         @SubscribeEvent
         public void onSound(PlaySoundEvent e) {
-            if (!enabled) return;
+            if (!any()) return;
             try { e.result = null; soundsBarred++; } catch (Throwable t) { }
         }
 
         // ============ CUBOS PRETOS ============
         @SubscribeEvent
         public void onWorldLast(RenderWorldLastEvent e) {
-            if (!enabled) return;
+            if (!any()) return;
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null || mc.theWorld == null || mc.thePlayer == null) return;
 
@@ -994,6 +1071,8 @@ public class UbmMod {
             if (list == null || list.isEmpty()) return;
 
             boolean firstPerson = mc.gameSettings.thirdPersonView == 0;
+            double maxDist = enabled2 ? 48.0 * 48.0 : CUBE_MAX_DIST;
+            double eyeY = py + p.getEyeHeight();
 
             try {
                 GL11.glPushMatrix();
@@ -1022,13 +1101,19 @@ public class UbmMod {
 
                     double dx = ex - px, dy = ey - py, dz = ez - pz;
                     double dSq = dx * dx + dy * dy + dz * dz;
-                    if (dSq > CUBE_MAX_DIST) continue;
+                    if (dSq > maxDist) continue;
+
+                    // OCC nos cubos tambem
+                    if (enabled2) {
+                        double cx = p.posX, cy = eyeY, cz = p.posZ;
+                        if (!isVisible(mc.theWorld, cx, cy, cz, en)) continue;
+                    }
 
                     float s = boxSize(en);
                     if (s <= 0) continue;
 
-                    float cy = (float)(ey + en.height * 0.5);
-                    drawBox(t, (float) ex, cy, (float) ez, s);
+                    float cyv = (float)(ey + en.height * 0.5);
+                    drawBox(t, (float) ex, cyv, (float) ez, s);
                     drawn++;
                     if (drawn > 200) break;
                 }
@@ -1084,12 +1169,13 @@ public class UbmMod {
             t.addVertex(x - s, y + s, z + s); t.addVertex(x - s, y + s, z - s);
         }
 
-        // ============ RENDER TICK ============
+        // ============ RENDER TICK (DFB + SPR) ============
         @SubscribeEvent
         public void onRenderTick(TickEvent.RenderTickEvent e) {
             if (e.phase == TickEvent.Phase.START) {
-                frameLiving = 0; frameDyn = 0; frameTe = 0;
-                if (enabled) {
+                // DFB: marca inicio do frame
+                if (enabled2) lastFrameStart = System.nanoTime();
+                if (any()) {
                     try {
                         if (!org.lwjgl.opengl.Display.isActive()) {
                             Thread.sleep(UNFOCUS_MS);
@@ -1108,20 +1194,95 @@ public class UbmMod {
                     System.out.println("[UBM] wrapAll geral falhou: " + t);
                 }
             }
-            if (enabled) clearParticles(mc);
+            if (any()) clearParticles(mc);
+
+            // DFB: mede duracao do frame
+            if (enabled2 && lastFrameStart > 0) {
+                lastFrameMs = (System.nanoTime() - lastFrameStart) / 1000000L;
+                applyDFB(mc);
+            }
 
             frames++;
             long now = System.currentTimeMillis();
             if (now - lastFps >= 1000) {
                 fps = frames; frames = 0; lastFps = now;
-                cullPerSec = cullLiving + cullDyn + cullTe;
-                cullLiving = 0; cullDyn = 0; cullTe = 0;
+                cullPerSec = cullLiving;
+                cullLiving = 0;
+
+                // SPR: ajuste a cada ~1s
+                if (enabled2) {
+                    sprAdjustCounter++;
+                    if (sprAdjustCounter >= 2) {  // 2s
+                        sprAdjustCounter = 0;
+                        applySPR(mc);
+                    }
+                }
             }
 
-            if (lastEnabled != (enabled ? 1 : 0)) {
-                lastEnabled = enabled ? 1 : 0;
+            if (lastEnabled != (any() ? 1 : 0)) {
+                lastEnabled = any() ? 1 : 0;
                 applySettings(mc);
             }
+        }
+
+        // ---------- DFB: reacao por frame ----------
+        void applyDFB(Minecraft mc) {
+            try {
+                if (dfbAdjustCooldown > 0) { dfbAdjustCooldown--; return; }
+
+                if (lastFrameMs > DFB_SLOW_MS) {
+                    dfbSlowStreak++;
+                    dfbFastStreak = 0;
+                    if (dfbSlowStreak >= 5) {
+                        dfbSlowStreak = 0;
+                        dfbAdjustCooldown = 20;  // 1s antes de mexer de novo
+                        // Reduz render distance imediatamente
+                        if (mc.gameSettings.renderDistanceChunks > SPR_MIN_RD) {
+                            mc.gameSettings.renderDistanceChunks--;
+                            mc.renderGlobal.loadRenderers();
+                        }
+                        // Aumenta agressividade do particle drop
+                        // (ja aplicado globalmente)
+                    }
+                } else if (lastFrameMs < DFB_FAST_MS) {
+                    dfbFastStreak++;
+                    dfbSlowStreak = 0;
+                    if (dfbFastStreak >= 40) {
+                        dfbFastStreak = 0;
+                        dfbAdjustCooldown = 60;
+                        // Restaura render distance lentamente
+                        if (mc.gameSettings.renderDistanceChunks < Math.min(oRender, RD_MAX)) {
+                            mc.gameSettings.renderDistanceChunks++;
+                            mc.renderGlobal.loadRenderers();
+                        }
+                    }
+                } else {
+                    dfbSlowStreak = 0;
+                    dfbFastStreak = 0;
+                }
+            } catch (Throwable t) { }
+        }
+
+        // ---------- SPR: ajuste de pipeline ----------
+        void applySPR(Minecraft mc) {
+            try {
+                GameSettings gs = mc.gameSettings;
+                if (fps < SPR_LOW_FPS) {
+                    // cena pesada: baixa tudo
+                    if (gs.renderDistanceChunks > SPR_MIN_RD) gs.renderDistanceChunks--;
+                    gs.fancyGraphics = false;
+                    gs.clouds = false;
+                    gs.ambientOcclusion = 0;
+                    gs.particleSetting = 2;
+                    mc.renderGlobal.loadRenderers();
+                } else if (fps > SPR_HIGH_FPS) {
+                    // cena leve: tenta subir (mas nunca acima do RD_MAX)
+                    if (gs.renderDistanceChunks < Math.min(oRender, RD_MAX)) {
+                        gs.renderDistanceChunks++;
+                        mc.renderGlobal.loadRenderers();
+                    }
+                }
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
@@ -1133,7 +1294,7 @@ public class UbmMod {
                 if (!(mc.effectRenderer instanceof ThrottledFx)) {
                     mc.effectRenderer = new ThrottledFx(mc.theWorld, mc.renderEngine);
                 }
-                if (enabled) {
+                if (any()) {
                     mc.theWorld.setRainStrength(0.0F);
                     mc.theWorld.setThunderStrength(0.0F);
                 }
@@ -1149,21 +1310,15 @@ public class UbmMod {
                     for (Object o : new ArrayList(m.entrySet())) {
                         Map.Entry en = (Map.Entry) o;
                         if (en == null || en.getKey() == null) continue;
-
                         Object v = en.getValue();
                         if (!(v instanceof Render)) continue;
                         if (v instanceof NoRender) continue;
                         if (v instanceof RenderPlayer) continue;
                         if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
-
-                        try {
-                            m.put(en.getKey(), new NoRender((Render) v));
-                        } catch (Throwable t) { }
+                        try { m.put(en.getKey(), new NoRender((Render) v)); } catch (Throwable t) { }
                     }
                 }
-            } catch (Throwable t) {
-                System.out.println("[UBM] wrapAll entity falhou: " + t);
-            }
+            } catch (Throwable t) { }
 
             try {
                 Map m = TileEntityRendererDispatcher.instance.mapSpecialRenderers;
@@ -1171,20 +1326,14 @@ public class UbmMod {
                     for (Object o : new ArrayList(m.entrySet())) {
                         Map.Entry en = (Map.Entry) o;
                         if (en == null || en.getKey() == null) continue;
-
                         Object v = en.getValue();
                         if (!(v instanceof TileEntitySpecialRenderer)) continue;
                         if (v instanceof NoTesr) continue;
                         if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
-
-                        try {
-                            m.put(en.getKey(), new NoTesr((TileEntitySpecialRenderer) v));
-                        } catch (Throwable t) { }
+                        try { m.put(en.getKey(), new NoTesr((TileEntitySpecialRenderer) v)); } catch (Throwable t) { }
                     }
                 }
-            } catch (Throwable t) {
-                System.out.println("[UBM] wrapAll tesr falhou: " + t);
-            }
+            } catch (Throwable t) { }
         }
 
         void clearParticles(Minecraft mc) {
@@ -1216,11 +1365,7 @@ public class UbmMod {
             if (mc == null) return;
             GameSettings gs = mc.gameSettings;
             if (gs == null) return;
-            try {
-                applySettingsInternal(mc, gs);
-            } catch (Throwable t) {
-                System.out.println("[UBM] applySettings falhou: " + t);
-            }
+            try { applySettingsInternal(mc, gs); } catch (Throwable t) { }
         }
 
         void applySettingsInternal(Minecraft mc, GameSettings gs) {
@@ -1232,7 +1377,7 @@ public class UbmMod {
                 oRender = gs.renderDistanceChunks; oMip = gs.mipmapLevels;
                 oAni = gs.anisotropicFiltering; oLimit = gs.limitFramerate; oFov = gs.fovSetting;
             }
-            if (enabled) {
+            if (any()) {
                 gs.fancyGraphics = false;
                 gs.clouds = false;
                 gs.viewBobbing = false;
@@ -1241,7 +1386,7 @@ public class UbmMod {
                 gs.enableVsync = false;
                 gs.ambientOcclusion = 0;
                 gs.particleSetting = 2;
-                gs.renderDistanceChunks = Math.min(oRender, RD_MAX);
+                gs.renderDistanceChunks = enabled2 ? SPR_MIN_RD : Math.min(oRender, RD_MAX);
                 gs.mipmapLevels = 0;
                 gs.anisotropicFiltering = 1;
                 gs.limitFramerate = FPS_CAP;
@@ -1264,20 +1409,27 @@ public class UbmMod {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null || !mc.gameSettings.showDebugInfo) return;
             e.left.add("");
-            e.left.add("\u00A7c[UBM]\u00A7r " + (enabled ? "\u00A7aON" : "\u00A77OFF")
+            e.left.add("\u00A7c[UBM]\u00A7r base:" + (enabled ? "\u00A7aON" : "\u00A77OFF")
+                + " adv:" + (enabled2 ? "\u00A7aON" : "\u00A77OFF")
                 + " | fps " + fps + " | mspt " + String.format("%.1f", mspt)
                 + " | budget " + currentBudget);
-            if (enabled) {
+            if (any()) {
                 e.left.add("\u00A7c[UBM]\u00A7r skip " + skippedPerSec
                     + " | cull " + cullPerSec
+                    + " | OCC " + occCulled
                     + " | TE " + totalSleeping()
                     + " | som " + soundsBarred
-                    + " | part " + partDropped);
+                    + " | part " + partDropped
+                    + " | Yfar " + yFarCulled);
+                if (enabled2) {
+                    e.left.add("\u00A7c[UBM]\u00A7r DFB frame " + lastFrameMs + "ms | render "
+                        + mc.gameSettings.renderDistanceChunks);
+                }
             }
         }
     }
 
-    // ================= COMANDO =================
+    // ================= COMANDOS =================
     public static class CmdUbm extends CommandBase {
         @Override public String getCommandName() { return "ubm"; }
         @Override public String getCommandUsage(ICommandSender s) { return "/ubm <0|1>"; }
@@ -1286,12 +1438,11 @@ public class UbmMod {
             if (s.getEntityWorld() != null && s.getEntityWorld().isRemote) return true;
             return s.canCommandSenderUseCommand(2, "ubm");
         }
-
         @Override
         public void processCommand(ICommandSender s, String[] a) {
             if (a.length == 0) {
-                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7r "
-                    + (enabled ? "\u00A7aON" : "\u00A77OFF")));
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7r base:" + (enabled ? "ON" : "OFF")
+                    + " | adv:" + (enabled2 ? "ON" : "OFF")));
                 return;
             }
             int v;
@@ -1303,16 +1454,53 @@ public class UbmMod {
             if (v == 0) {
                 setEnabled(false);
                 saveState();
-                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A77 DESLIGADO\u00A7r"));
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A77 base DESLIGADO\u00A7r"));
             } else if (v == 1) {
                 setEnabled(true);
                 saveState();
                 currentBudget = IOAB_BASE_BUDGET;
                 SCORES.clear();
-                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7a ATIVADO\u00A7r"));
-                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7r IOAB + TE dormindo + culling + cubos + HUD simples"));
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7a base ATIVADO\u00A7r"));
             } else {
                 s.addChatMessage(new ChatComponentText("\u00A7cUse /ubm 0 ou /ubm 1"));
+            }
+        }
+    }
+
+    public static class CmdUbm2 extends CommandBase {
+        @Override public String getCommandName() { return "ubm2"; }
+        @Override public String getCommandUsage(ICommandSender s) { return "/ubm2 <0|1>"; }
+        @Override public int getRequiredPermissionLevel() { return 0; }
+        @Override public boolean canCommandSenderUseCommand(ICommandSender s) {
+            if (s.getEntityWorld() != null && s.getEntityWorld().isRemote) return true;
+            return s.canCommandSenderUseCommand(2, "ubm2");
+        }
+        @Override
+        public void processCommand(ICommandSender s, String[] a) {
+            if (a.length == 0) {
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM2]\u00A7r "
+                    + (enabled2 ? "\u00A7aON" : "\u00A77OFF")));
+                return;
+            }
+            int v;
+            try { v = Integer.parseInt(a[0].trim()); }
+            catch (NumberFormatException ex) {
+                s.addChatMessage(new ChatComponentText("\u00A7cUso: " + getCommandUsage(s)));
+                return;
+            }
+            if (v == 0) {
+                setEnabled2(false);
+                saveState();
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM2]\u00A77 4 metodos DESLIGADOS\u00A7r"));
+            } else if (v == 1) {
+                setEnabled2(true);
+                saveState();
+                currentBudget = IOAB_BASE_BUDGET;
+                SCORES.clear();
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM2]\u00A7a 4 METODOS ATIVADOS\u00A7r"));
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM2]\u00A7r QVSO + SPR + OCC + DFB (modo agressivo)"));
+            } else {
+                s.addChatMessage(new ChatComponentText("\u00A7cUse /ubm2 0 ou /ubm2 1"));
             }
         }
     }
