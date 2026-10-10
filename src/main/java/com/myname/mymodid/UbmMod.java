@@ -31,7 +31,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.particle.EffectRenderer;
 import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.culling.ICamera;
 import net.minecraft.client.renderer.entity.Render;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.client.renderer.entity.RenderPlayer;
@@ -100,7 +99,7 @@ import net.minecraftforge.event.world.ExplosionEvent;
  *
  * Comando: /ubm 0 (desliga) | /ubm 1 (liga)
  */
-@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "1.1", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "1.2", acceptedMinecraftVersions = "[1.7.10]")
 public class UbmMod {
 
     public static final String MODID = "ubm";
@@ -109,19 +108,16 @@ public class UbmMod {
     static volatile boolean enabled = false;
     static Configuration cfg;
 
-    // IOAB
     static final int IOAB_BASE_BUDGET = 800;
     static final int IOAB_MIN_BUDGET  = 200;
     static final int IOAB_MAX_BUDGET  = 2400;
     static final int IOAB_REEVAL      = 10;
     static final int TH_A = 80, TH_B = 60, TH_C = 40, TH_D = 25, TH_E = 12;
 
-    // TE
     static final int TE_CHEST  = 32;
     static final int TE_HOPPER = 32;
     static final int TE_MODS   = 48;
 
-    // itens
     static final int ITEM_MERGE_CELL = 3;
     static final int ITEM_LIFE       = 2400;
     static final int JUNK_LIFE       = 200;
@@ -130,7 +126,6 @@ public class UbmMod {
     static final int XP_CAP          = 4;
     static final int XP_FAR          = 64;
 
-    // mobs
     static final int SPAWN_DENY_PCT = 40;
     static final int DESPAWN_DIST   = 64;
     static final int MOB_CHUNK      = 24;
@@ -144,7 +139,6 @@ public class UbmMod {
     static final int TNT_CAP        = 24;
     static final int PROJ_CAP       = 40;
 
-    // client
     static final int CULL_LIVING   = 64;
     static final int CULL_DYN      = 48;
     static final int CULL_TE       = 32;
@@ -867,11 +861,6 @@ public class UbmMod {
         protected ResourceLocation getEntityTexture(Entity e) {
             try { return TextureMap.locationBlocksTexture; } catch (Throwable t) { return null; }
         }
-
-        @Override
-        public boolean shouldRender(Entity e, ICamera cam, double x, double y, double z) {
-            return false;
-        }
     }
 
     @SideOnly(Side.CLIENT)
@@ -1154,7 +1143,6 @@ public class UbmMod {
         // ============ WRAP ============
         @SuppressWarnings("unchecked")
         void wrapAll() {
-            // ----- entidades -----
             try {
                 Map m = RenderManager.instance.entityRenderMap;
                 if (m != null) {
@@ -1165,10 +1153,7 @@ public class UbmMod {
                         Object v = en.getValue();
                         if (!(v instanceof Render)) continue;
                         if (v instanceof NoRender) continue;
-
-                        // NUNCA troca o RenderPlayer — ItemRenderer faz cast direto
                         if (v instanceof RenderPlayer) continue;
-
                         if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
 
                         try {
@@ -1180,7 +1165,6 @@ public class UbmMod {
                 System.out.println("[UBM] wrapAll entity falhou: " + t);
             }
 
-            // ----- tile entities -----
             try {
                 Map m = TileEntityRendererDispatcher.instance.mapSpecialRenderers;
                 if (m != null) {
