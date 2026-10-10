@@ -31,8 +31,11 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.particle.EffectRenderer;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.culling.ICamera;
 import net.minecraft.client.renderer.entity.Render;
 import net.minecraft.client.renderer.entity.RenderManager;
+import net.minecraft.client.renderer.entity.RenderPlayer;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.renderer.tileentity.TileEntityRendererDispatcher;
 import net.minecraft.client.renderer.tileentity.TileEntitySpecialRenderer;
@@ -95,44 +98,30 @@ import net.minecraftforge.event.world.ExplosionEvent;
 /**
  * UBM - Ultimate Boost Mod (arquivo único, sem ASM)
  *
- * Junta em um só mod:
- *   [1] IOAB - tick por score (6 fatores) + orçamento adaptativo
- *   [2] TE throttle (baus/funis/TEs de mods dormem longe)
- *   [3] Merge de itens/XP + caps + despawn
- *   [4] Culling de render (mobs/itens/TEs)
- *   [5] Substituição visual: entidades viram cubos pretos
- *   [6] HUD trocado por barras simples
- *   [7] Kill de som, partículas, névoa, mão, wireframe, view bobbing
- *   [8] Settings de render no mínimo
- *   [9] Worldgen enxuto + clima limpo
- *
  * Comando: /ubm 0 (desliga) | /ubm 1 (liga)
  */
-@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "1.0", acceptedMinecraftVersions = "[1.7.10]")
+@Mod(modid = UbmMod.MODID, name = "Ultimate Boost", version = "1.1", acceptedMinecraftVersions = "[1.7.10]")
 public class UbmMod {
 
     public static final String MODID = "ubm";
     public static UbmMod instance;
 
-    // ========================================================================
-    // ESTADO
-    // ========================================================================
     static volatile boolean enabled = false;
     static Configuration cfg;
 
-    // ---- IOAB ----
+    // IOAB
     static final int IOAB_BASE_BUDGET = 800;
     static final int IOAB_MIN_BUDGET  = 200;
     static final int IOAB_MAX_BUDGET  = 2400;
     static final int IOAB_REEVAL      = 10;
     static final int TH_A = 80, TH_B = 60, TH_C = 40, TH_D = 25, TH_E = 12;
 
-    // ---- TE ----
+    // TE
     static final int TE_CHEST  = 32;
     static final int TE_HOPPER = 32;
     static final int TE_MODS   = 48;
 
-    // ---- itens/XP ----
+    // itens
     static final int ITEM_MERGE_CELL = 3;
     static final int ITEM_LIFE       = 2400;
     static final int JUNK_LIFE       = 200;
@@ -141,7 +130,7 @@ public class UbmMod {
     static final int XP_CAP          = 4;
     static final int XP_FAR          = 64;
 
-    // ---- mobs ----
+    // mobs
     static final int SPAWN_DENY_PCT = 40;
     static final int DESPAWN_DIST   = 64;
     static final int MOB_CHUNK      = 24;
@@ -155,13 +144,10 @@ public class UbmMod {
     static final int TNT_CAP        = 24;
     static final int PROJ_CAP       = 40;
 
-    // ---- client ----
+    // client
     static final int CULL_LIVING   = 64;
     static final int CULL_DYN      = 48;
     static final int CULL_TE       = 32;
-    static final int FR_LIVING     = 50;
-    static final int FR_DYN        = 60;
-    static final int FR_TE         = 70;
     static final int NAME_DIST     = 8;
     static final int PART_DROP_PCT = 50;
     static final int PART_DIST     = 20;
@@ -169,14 +155,9 @@ public class UbmMod {
     static final float FOV_MAX     = 70f;
     static final int FPS_CAP       = 260;
     static final int UNFOCUS_MS    = 100;
-    static final int CL_TICK_DIST  = 32;
 
-    // ---- cubos pretos ----
     static final double CUBE_MAX_DIST = 64.0 * 64.0;
 
-    // ========================================================================
-    // COMUM
-    // ========================================================================
     static final Random RND = new Random();
     static final UUID FOLLOW_ID = UUID.fromString("0b3d5a7e-1f2c-4d6b-9e8a-7c5b3a1f0d2e");
     static final Set<String> JUNK = new HashSet<String>();
@@ -184,7 +165,6 @@ public class UbmMod {
     static volatile int fps = 0;
     static volatile double mspt = 0;
     static int skippedPerSec = 0, skippedThisSec = 0;
-    static int evaluatedPerSec = 0, processedPerSec = 0, processedThisSec = 0;
     static int cullPerSec = 0, cullLiving = 0, cullDyn = 0, cullTe = 0;
     static int itemsMerged = 0, orbsMerged = 0, spawnsDenied = 0, despawned = 0;
     static int mobCapKilled = 0, chunksReaped = 0, teSlept = 0, genDenied = 0;
@@ -201,43 +181,35 @@ public class UbmMod {
     public static void setEnabled(boolean b) { enabled = b; }
     public static boolean isEnabled() { return enabled; }
 
-    // ========================================================================
-    // IOAB — SCORE POR ENTIDADE
-    // ========================================================================
+    // ================= IOAB =================
     static class Score { int value = 50; int cooldown = 0; }
     static final Map<EntityLivingBase, Score> SCORES = new WeakHashMap<EntityLivingBase, Score>();
 
     static int computeScore(EntityLivingBase en, double distSq, float lookDot) {
         int s = 0;
-        // 1) distancia
         if (distSq < 4) s += 40;
         else if (distSq < 16) s += 36;
         else if (distSq < 64) s += 28;
         else if (distSq < 256) s += 18;
         else if (distSq < 1024) s += 8;
         else if (distSq < 4096) s += 3;
-        // 2) movimento
         double m = Math.abs(en.motionX) + Math.abs(en.motionY) + Math.abs(en.motionZ);
         if (m > 0.15) s += 20;
         else if (m > 0.05) s += 14;
         else if (m > 0.01) s += 8;
         else if (m > 0.001) s += 3;
-        // 3) combate
         if (en.hurtTime > 0) s += 25;
         else if (en instanceof EntityLiving && ((EntityLiving) en).getAttackTarget() != null) s += 18;
         if (en instanceof IMob) s += 3;
-        // 4) saude
         float maxHp = en.getMaxHealth();
         if (maxHp > 0) {
             float pct = en.getHealth() / maxHp;
             if (pct < 0.3f) s += 10;
             else if (pct < 0.7f) s += 4;
         }
-        // 5) tipo
         if (en instanceof EntityPlayer) s += 10;
         if (en instanceof IBossDisplayData) s += 10;
         if (en instanceof EntityTameable && ((EntityTameable) en).isTamed()) s += 5;
-        // 6) olhar
         if (lookDot > 0.7f) s += 10;
         else if (lookDot > 0.3f) s += 5;
         else if (lookDot > 0.0f) s += 2;
@@ -276,8 +248,8 @@ public class UbmMod {
             Object o = pl.get(i);
             if (!(o instanceof EntityPlayer)) continue;
             EntityPlayer p = (EntityPlayer) o;
-            double dx = x - p.posX, dy = y - p.posY, dz = z - p.posZ;
-            double len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            double dx = x - p.posX, dz = z - p.posZ;
+            double len = Math.sqrt(dx * dx + dz * dz);
             if (len < 0.001) continue;
             dx /= len; dz /= len;
             double lx = -Math.sin(Math.toRadians(p.rotationYaw));
@@ -290,9 +262,7 @@ public class UbmMod {
 
     static double sq(double v) { return v * v; }
 
-    // ========================================================================
-    // TE DORMINDO
-    // ========================================================================
+    // ================= TE =================
     static final Map<Integer, List<TileEntity>> SLEEP = new HashMap<Integer, List<TileEntity>>();
     static final Map<Class<?>, Integer> TE_GROUP = new HashMap<Class<?>, Integer>();
 
@@ -360,9 +330,7 @@ public class UbmMod {
         return n;
     }
 
-    // ========================================================================
-    // ITENS / XP / MOBS
-    // ========================================================================
+    // ================= ITENS / XP / MOBS =================
     static long cellKey(int cx, int cy, int cz) {
         return ((long) (cx & 0x1FFFFF) << 40) | ((long) (cy & 0xFF) << 32) | (cz & 0xFFFFFFFFL);
     }
@@ -618,9 +586,7 @@ public class UbmMod {
         for (WorldServer w : srv.worldServers) if (w != null) wake(w);
     }
 
-    // ========================================================================
-    // CICLO DE VIDA
-    // ========================================================================
+    // ================= CICLO DE VIDA =================
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent e) {
         cfg = new Configuration(e.getSuggestedConfigurationFile());
@@ -661,20 +627,20 @@ public class UbmMod {
         cfg.save();
     }
 
-    // ========================================================================
-    // SERVIDOR
-    // ========================================================================
+    // ================= SERVIDOR =================
     public static class ServerEvents {
 
         long tickStart = 0;
         int secCounter = 0;
+        int explThisTick = 0;
 
         @SubscribeEvent
         public void onServerTick(TickEvent.ServerTickEvent e) {
             if (e.phase == TickEvent.Phase.START) {
                 tickStart = System.nanoTime();
                 processedThisTick = 0;
-                applyServerRules();
+                explThisTick = 0;
+                try { applyServerRules(); } catch (Throwable t) { }
                 return;
             }
             double ms = (System.nanoTime() - tickStart) / 1000000.0;
@@ -704,10 +670,8 @@ public class UbmMod {
             if (++secCounter >= 20) {
                 secCounter = 0;
                 skippedPerSec = skippedThisSec;
-                processedPerSec = processedThisSec;
                 skippedThisSec = 0;
-                processedThisSec = 0;
-                unloadIdleDims();
+                try { unloadIdleDims(); } catch (Throwable t) { }
             }
         }
 
@@ -715,23 +679,25 @@ public class UbmMod {
         public void onWorldTick(TickEvent.WorldTickEvent e) {
             if (e.world.isRemote || !(e.world instanceof WorldServer)) return;
             if (e.phase != TickEvent.Phase.START) return;
-            WorldServer w = (WorldServer) e.world;
             if (!enabled) return;
-            long t = w.getTotalWorldTime();
+            try {
+                WorldServer w = (WorldServer) e.world;
+                long t = w.getTotalWorldTime();
 
-            if (t % 20 == 0) wake(w);
-            else if (t % 20 == 1) sleepTEs(w);
+                if (t % 20 == 0) wake(w);
+                else if (t % 20 == 1) sleepTEs(w);
 
-            if (t % 40 == 7) mergeItems(w);
-            if (t % 100 == 9) itemsFar(w);
-            if (t % 100 == 11) orbsFar(w);
-            if (t % 100 == 13) mobCap(w, MOB_CHUNK, false);
-            if (t % 100 == 17) mobCap(w, ANIMAL_CHUNK, true);
-            if (t % 200 == 21) entityCap(w);
-            if (t % 100 == 57) reap(w);
-            if (t % 100 == 3) clearWeather(w);
-            if (t % 100 == 31) arrowReap(w);
-            if (t % 100 == 41) projCap(w);
+                if (t % 40 == 7) mergeItems(w);
+                if (t % 100 == 9) itemsFar(w);
+                if (t % 100 == 11) orbsFar(w);
+                if (t % 100 == 13) mobCap(w, MOB_CHUNK, false);
+                if (t % 100 == 17) mobCap(w, ANIMAL_CHUNK, true);
+                if (t % 200 == 21) entityCap(w);
+                if (t % 100 == 57) reap(w);
+                if (t % 100 == 3) clearWeather(w);
+                if (t % 100 == 31) arrowReap(w);
+                if (t % 100 == 41) projCap(w);
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
@@ -759,10 +725,8 @@ public class UbmMod {
                 if (dSq < 0) dSq = Double.MAX_VALUE;
                 float look = nearestLookDot(en.worldObj, en.posX, en.posY, en.posZ);
                 sc.value = computeScore(en, dSq, look);
-                evaluatedPerSec++;
             } else sc.cooldown--;
 
-            processedThisSec++;
             processedThisTick++;
 
             int interval = scoreToInterval(sc.value);
@@ -781,71 +745,75 @@ public class UbmMod {
         @SubscribeEvent
         public void onJoin(EntityJoinWorldEvent e) {
             if (!enabled || e.world.isRemote) return;
-            Entity en = e.entity;
-            if (en instanceof EntityItem) {
-                EntityItem it = (EntityItem) en;
-                if (it.lifespan > ITEM_LIFE) it.lifespan = ITEM_LIFE;
-                if (it.getEntityItem() != null) {
-                    Object nm = Item.itemRegistry.getNameForObject(it.getEntityItem().getItem());
-                    if (nm != null && JUNK.contains(nm.toString())) it.lifespan = Math.min(it.lifespan, JUNK_LIFE);
-                }
-                List l = e.world.getEntitiesWithinAABB(EntityItem.class, it.boundingBox.expand(8.0, 4.0, 8.0));
-                if (l.size() > ITEM_CAP) it.lifespan = Math.min(it.lifespan, 200);
-            } else if (en instanceof EntityXPOrb) {
-                EntityXPOrb orb = (EntityXPOrb) en;
-                List l = e.world.getEntitiesWithinAABB(EntityXPOrb.class, orb.boundingBox.expand(6.0, 3.0, 6.0));
-                if (l.size() >= XP_CAP) {
-                    EntityXPOrb target = (EntityXPOrb) l.get(0);
-                    if (target != orb && !target.isDead) {
-                        target.xpValue += orb.xpValue;
-                        orbsMerged++;
-                        e.setCanceled(true);
+            try {
+                Entity en = e.entity;
+                if (en instanceof EntityItem) {
+                    EntityItem it = (EntityItem) en;
+                    if (it.lifespan > ITEM_LIFE) it.lifespan = ITEM_LIFE;
+                    if (it.getEntityItem() != null) {
+                        Object nm = Item.itemRegistry.getNameForObject(it.getEntityItem().getItem());
+                        if (nm != null && JUNK.contains(nm.toString())) it.lifespan = Math.min(it.lifespan, JUNK_LIFE);
                     }
+                    List l = e.world.getEntitiesWithinAABB(EntityItem.class, it.boundingBox.expand(8.0, 4.0, 8.0));
+                    if (l.size() > ITEM_CAP) it.lifespan = Math.min(it.lifespan, 200);
+                } else if (en instanceof EntityXPOrb) {
+                    EntityXPOrb orb = (EntityXPOrb) en;
+                    List l = e.world.getEntitiesWithinAABB(EntityXPOrb.class, orb.boundingBox.expand(6.0, 3.0, 6.0));
+                    if (l.size() >= XP_CAP) {
+                        EntityXPOrb target = (EntityXPOrb) l.get(0);
+                        if (target != orb && !target.isDead) {
+                            target.xpValue += orb.xpValue;
+                            orbsMerged++;
+                            e.setCanceled(true);
+                        }
+                    }
+                } else if (en instanceof EntityBat || en instanceof EntitySquid) {
+                    e.setCanceled(true);
+                    spawnsDenied++;
+                } else if (en instanceof EntitySlime) {
+                    List l = e.world.getEntitiesWithinAABB(EntitySlime.class, en.boundingBox.expand(16.0, 8.0, 16.0));
+                    if (l.size() > SLIME_CAP) { e.setCanceled(true); slimeDenied++; }
+                } else if (en instanceof EntityTNTPrimed) {
+                    List l = e.world.getEntitiesWithinAABB(EntityTNTPrimed.class, en.boundingBox.expand(12.0, 8.0, 12.0));
+                    if (l.size() > TNT_CAP) { e.setCanceled(true); tntDenied++; }
+                } else if (en instanceof EntityLiving) {
+                    capFollow((EntityLiving) en);
                 }
-            } else if (en instanceof EntityBat || en instanceof EntitySquid) {
-                e.setCanceled(true);
-                spawnsDenied++;
-            } else if (en instanceof EntitySlime) {
-                List l = e.world.getEntitiesWithinAABB(EntitySlime.class, en.boundingBox.expand(16.0, 8.0, 16.0));
-                if (l.size() > SLIME_CAP) { e.setCanceled(true); slimeDenied++; }
-            } else if (en instanceof EntityTNTPrimed) {
-                List l = e.world.getEntitiesWithinAABB(EntityTNTPrimed.class, en.boundingBox.expand(12.0, 8.0, 12.0));
-                if (l.size() > TNT_CAP) { e.setCanceled(true); tntDenied++; }
-            } else if (en instanceof EntityLiving) {
-                capFollow((EntityLiving) en);
-            }
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
         public void onCheckSpawn(LivingSpawnEvent.CheckSpawn e) {
             if (!enabled || e.world.isRemote) return;
-            double p = SPAWN_DENY_PCT / 100.0;
-            if (!(e.entityLiving instanceof IMob)) p = p / 2.0;
-            if (RND.nextDouble() < p) { e.setResult(Event.Result.DENY); spawnsDenied++; }
+            try {
+                double p = SPAWN_DENY_PCT / 100.0;
+                if (!(e.entityLiving instanceof IMob)) p = p / 2.0;
+                if (RND.nextDouble() < p) { e.setResult(Event.Result.DENY); spawnsDenied++; }
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
         public void onExplosionStart(ExplosionEvent.Start e) {
             if (!enabled || e.world.isRemote) return;
-            if (++explThisTick > EXPL_PER_TICK) { e.setCanceled(true); }
+            try {
+                if (++explThisTick > EXPL_PER_TICK) e.setCanceled(true);
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
         public void onAllowDespawn(LivingSpawnEvent.AllowDespawn e) {
             if (!enabled || e.world.isRemote) return;
-            if (!(e.entityLiving instanceof EntityLiving)) return;
-            EntityLiving el = (EntityLiving) e.entityLiving;
-            double n = nearestPlayerSq(e.world, el.posX, el.posY, el.posZ);
-            if (n < 0) return;
-            if (n > sq(DESPAWN_DIST)) { e.setResult(Event.Result.ALLOW); despawned++; }
+            try {
+                if (!(e.entityLiving instanceof EntityLiving)) return;
+                EntityLiving el = (EntityLiving) e.entityLiving;
+                double n = nearestPlayerSq(e.world, el.posX, el.posY, el.posZ);
+                if (n < 0) return;
+                if (n > sq(DESPAWN_DIST)) { e.setResult(Event.Result.ALLOW); despawned++; }
+            } catch (Throwable t) { }
         }
-
-        int explThisTick = 0;
     }
 
-    // ========================================================================
-    // WORLDGEN
-    // ========================================================================
+    // ================= WORLDGEN =================
     public static class TerrainEvents {
         static final Set<String> D2 = set("DEAD_BUSH", "LILYPAD", "SHROOM", "BIG_SHROOM", "FLOWERS");
         static final Set<String> P1 = set("LAKE", "LAVA", "NETHER_LAVA", "NETHER_LAVA2");
@@ -859,46 +827,82 @@ public class UbmMod {
         @SubscribeEvent
         public void onDecorate(DecorateBiomeEvent.Decorate e) {
             if (!enabled) return;
-            String n = e.type.name();
-            if (n.equals("LAKE") || D2.contains(n)) { e.setResult(Event.Result.DENY); genDenied++; }
+            try {
+                String n = e.type.name();
+                if (n.equals("LAKE") || D2.contains(n)) { e.setResult(Event.Result.DENY); genDenied++; }
+            } catch (Throwable t) { }
         }
 
         @SubscribeEvent
         public void onPopulate(PopulateChunkEvent.Populate e) {
             if (!enabled) return;
-            if (P1.contains(e.type.name())) { e.setResult(Event.Result.DENY); genDenied++; }
+            try {
+                if (P1.contains(e.type.name())) { e.setResult(Event.Result.DENY); genDenied++; }
+            } catch (Throwable t) { }
         }
     }
 
-    // ========================================================================
-    // CLIENTE
-    // ========================================================================
+    // ================= RENDER VAZIO =================
     @SideOnly(Side.CLIENT)
     public static class NoRender extends Render {
-        public NoRender() { setRenderManager(RenderManager.instance); }
-        @Override public void doRender(Entity e, double x, double y, double z, float yaw, float pt) { }
-        @Override public void doRenderShadowAndFire(Entity e, double x, double y, double z, float yaw, float pt) { }
-        @Override protected ResourceLocation getEntityTexture(Entity e) { return TextureMap.locationBlocksTexture; }
+        final Render inner;
+
+        public NoRender() {
+            this.inner = null;
+            try { setRenderManager(RenderManager.instance); } catch (Throwable t) { }
+        }
+
+        public NoRender(Render inner) {
+            this.inner = inner;
+            try { setRenderManager(RenderManager.instance); } catch (Throwable t) { }
+        }
+
+        @Override
+        public void doRender(Entity e, double x, double y, double z, float yaw, float pt) { }
+
+        @Override
+        public void doRenderShadowAndFire(Entity e, double x, double y, double z, float yaw, float pt) { }
+
+        @Override
+        protected ResourceLocation getEntityTexture(Entity e) {
+            try { return TextureMap.locationBlocksTexture; } catch (Throwable t) { return null; }
+        }
+
+        @Override
+        public boolean shouldRender(Entity e, ICamera cam, double x, double y, double z) {
+            return false;
+        }
     }
 
     @SideOnly(Side.CLIENT)
     public static class NoTesr extends TileEntitySpecialRenderer {
-        @Override public void renderTileEntityAt(TileEntity te, double x, double y, double z, float pt) { }
+        final TileEntitySpecialRenderer inner;
+
+        public NoTesr() { this.inner = null; }
+        public NoTesr(TileEntitySpecialRenderer inner) { this.inner = inner; }
+
+        @Override
+        public void renderTileEntityAt(TileEntity te, double x, double y, double z, float pt) { }
     }
 
     @SideOnly(Side.CLIENT)
     public static class ThrottledFx extends EffectRenderer {
-        public ThrottledFx(World w, net.minecraft.client.renderer.texture.TextureManager tm) { super(w, tm); }
-        @Override public void addEffect(net.minecraft.client.particle.EntityFX fx) {
+        public ThrottledFx(World w, TextureManager tm) { super(w, tm); }
+
+        @Override
+        public void addEffect(net.minecraft.client.particle.EntityFX fx) {
             if (enabled) {
-                if (RND.nextInt(100) < PART_DROP_PCT) { partDropped++; return; }
-                Entity v = Minecraft.getMinecraft().renderViewEntity;
-                if (v != null && fx.getDistanceSqToEntity(v) > sq(PART_DIST)) { partDropped++; return; }
+                try {
+                    if (RND.nextInt(100) < PART_DROP_PCT) { partDropped++; return; }
+                    Entity v = Minecraft.getMinecraft().renderViewEntity;
+                    if (v != null && fx.getDistanceSqToEntity(v) > sq(PART_DIST)) { partDropped++; return; }
+                } catch (Throwable t) { }
             }
             super.addEffect(fx);
         }
     }
 
+    // ================= CLIENTE =================
     @SideOnly(Side.CLIENT)
     public static class ClientEvents {
 
@@ -915,7 +919,6 @@ public class UbmMod {
         static Field FX_LAYERS = null;
         static boolean FX_CHECKED = false;
 
-        // ---- HUD: cancela tudo ----
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onOverlayPre(RenderGameOverlayEvent.Pre e) {
             if (!enabled) return;
@@ -923,41 +926,44 @@ public class UbmMod {
             e.setCanceled(true);
         }
 
-        // ---- HUD: barras simples ----
         @SubscribeEvent
         public void onOverlayPost(RenderGameOverlayEvent.Post e) {
             if (!enabled) return;
             if (e.type != RenderGameOverlayEvent.ElementType.ALL) return;
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc == null || mc.thePlayer == null) return;
-            EntityPlayer p = mc.thePlayer;
-            int w = e.resolution.getScaledWidth();
-            float hp = Math.max(0, Math.min(1, p.getHealth() / p.getMaxHealth()));
-            float fd = Math.max(0, Math.min(1, p.getFoodStats().getFoodLevel() / 20.0f));
-            Gui.drawRect(4, 4, 104, 11, 0xFF000000);
-            Gui.drawRect(4, 4, 4 + (int)(100 * hp), 11, hp > 0.5f ? 0xFF00CC00 : (hp > 0.25f ? 0xFFCCAA00 : 0xFFCC0000));
-            Gui.drawRect(4, 14, 104, 21, 0xFF000000);
-            Gui.drawRect(4, 14, 4 + (int)(100 * fd), 21, 0xFFFF8800);
-            Gui.drawRect(w - 104, 4, w - 4, 11, 0xFF000000);
-            Gui.drawRect(w - 104, 4, w - 104 + (int)(100 * p.experience), 11, 0xFFCC00FF);
-            mc.fontRenderer.drawStringWithShadow("Lv " + p.experienceLevel, w - 130, 4, 0xFFFFFFFF);
+            try {
+                Minecraft mc = Minecraft.getMinecraft();
+                if (mc == null || mc.thePlayer == null) return;
+                EntityPlayer p = mc.thePlayer;
+                int w = e.resolution.getScaledWidth();
+                float hp = Math.max(0, Math.min(1, p.getHealth() / p.getMaxHealth()));
+                float fd = Math.max(0, Math.min(1, p.getFoodStats().getFoodLevel() / 20.0f));
+                Gui.drawRect(4, 4, 104, 11, 0xFF000000);
+                Gui.drawRect(4, 4, 4 + (int)(100 * hp), 11, hp > 0.5f ? 0xFF00CC00 : (hp > 0.25f ? 0xFFCCAA00 : 0xFFCC0000));
+                Gui.drawRect(4, 14, 104, 21, 0xFF000000);
+                Gui.drawRect(4, 14, 4 + (int)(100 * fd), 21, 0xFFFF8800);
+                Gui.drawRect(w - 104, 4, w - 4, 11, 0xFF000000);
+                Gui.drawRect(w - 104, 4, w - 104 + (int)(100 * p.experience), 11, 0xFFCC00FF);
+                mc.fontRenderer.drawStringWithShadow("Lv " + p.experienceLevel, w - 130, 4, 0xFFFFFFFF);
+            } catch (Throwable t) { }
         }
 
-        // ---- Mão ----
         @SubscribeEvent public void onHand(RenderHandEvent e) { if (enabled) e.setCanceled(true); }
-        // ---- Wireframe ----
         @SubscribeEvent public void onHighlight(DrawBlockHighlightEvent e) { if (enabled) e.setCanceled(true); }
 
-        // ---- NÃO renderiza entidades vivas (viram cubos no WorldLast) ----
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onRenderLiving(RenderLivingEvent.Pre e) {
             if (!enabled) return;
-            if (e.entity instanceof EntityPlayer && e.entity != Minecraft.getMinecraft().thePlayer) return;
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) return;
+            if (e.entity == mc.thePlayer) return;
             e.setCanceled(true);
+            cullLiving++;
         }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
-        public void onSpecials(RenderLivingEvent.Specials.Pre e) { if (enabled) e.setCanceled(true); }
+        public void onSpecials(RenderLivingEvent.Specials.Pre e) {
+            if (enabled) e.setCanceled(true);
+        }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
         public void onPlayer(RenderPlayerEvent.Pre e) {
@@ -967,26 +973,23 @@ public class UbmMod {
         }
 
         @SubscribeEvent(priority = EventPriority.HIGHEST)
-        public void onPlayerSpecials(RenderPlayerEvent.Specials.Pre e) { if (enabled) e.setCanceled(true); }
+        public void onPlayerSpecials(RenderPlayerEvent.Specials.Pre e) {
+            if (enabled) e.setCanceled(true);
+        }
 
-        // ---- Névoa ----
         @SubscribeEvent public void onFogDensity(EntityViewRenderEvent.FogDensity e) { if (enabled) e.density = 0f; }
         @SubscribeEvent public void onFogColors(EntityViewRenderEvent.FogColors e) {
             if (!enabled) return;
             e.red = 0.5f; e.green = 0.5f; e.blue = 0.5f;
         }
 
-        // ---- Som ----
         @SubscribeEvent
         public void onSound(PlaySoundEvent e) {
             if (!enabled) return;
-            e.result = null;
-            soundsBarred++;
+            try { e.result = null; soundsBarred++; } catch (Throwable t) { }
         }
 
-        // ====================================================================
-        // CUBOS PRETOS — desenhados no WorldLast
-        // ====================================================================
+        // ============ CUBOS PRETOS ============
         @SubscribeEvent
         public void onWorldLast(RenderWorldLastEvent e) {
             if (!enabled) return;
@@ -1003,50 +1006,55 @@ public class UbmMod {
 
             boolean firstPerson = mc.gameSettings.thirdPersonView == 0;
 
-            GL11.glPushMatrix();
-            GL11.glTranslated(-px, -py, -pz);
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glDepthMask(false);
-            GL11.glDisable(GL11.GL_CULL_FACE);
+            try {
+                GL11.glPushMatrix();
+                GL11.glTranslated(-px, -py, -pz);
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                GL11.glDisable(GL11.GL_LIGHTING);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GL11.glDepthMask(false);
+                GL11.glDisable(GL11.GL_CULL_FACE);
 
-            Tessellator t = Tessellator.instance;
-            t.startDrawingQuads();
+                Tessellator t = Tessellator.instance;
+                t.startDrawingQuads();
 
-            int drawn = 0;
-            for (int i = 0; i < list.size(); i++) {
-                Entity en = (Entity) list.get(i);
-                if (en == null || en.isDead) continue;
-                if (en == p && firstPerson) continue;
-                if (en instanceof IBossDisplayData) continue;
+                int drawn = 0;
+                for (int i = 0; i < list.size(); i++) {
+                    Entity en = (Entity) list.get(i);
+                    if (en == null || en.isDead) continue;
+                    if (en == p && firstPerson) continue;
+                    if (en instanceof IBossDisplayData) continue;
+                    if (en instanceof EntityPlayer) continue;
 
-                double ex = en.lastTickPosX + (en.posX - en.lastTickPosX) * e.partialTicks;
-                double ey = en.lastTickPosY + (en.posY - en.lastTickPosY) * e.partialTicks;
-                double ez = en.lastTickPosZ + (en.posZ - en.lastTickPosZ) * e.partialTicks;
+                    double ex = en.lastTickPosX + (en.posX - en.lastTickPosX) * e.partialTicks;
+                    double ey = en.lastTickPosY + (en.posY - en.lastTickPosY) * e.partialTicks;
+                    double ez = en.lastTickPosZ + (en.posZ - en.lastTickPosZ) * e.partialTicks;
 
-                double dx = ex - px, dy = ey - py, dz = ez - pz;
-                double dSq = dx * dx + dy * dy + dz * dz;
-                if (dSq > CUBE_MAX_DIST) continue;
+                    double dx = ex - px, dy = ey - py, dz = ez - pz;
+                    double dSq = dx * dx + dy * dy + dz * dz;
+                    if (dSq > CUBE_MAX_DIST) continue;
 
-                float s = boxSize(en);
-                if (s <= 0) continue;
+                    float s = boxSize(en);
+                    if (s <= 0) continue;
 
-                float cy = (float)(ey + en.height * 0.5);
-                drawBox(t, (float) ex, cy, (float) ez, s);
-                drawn++;
-                if (drawn > 200) break;
+                    float cy = (float)(ey + en.height * 0.5);
+                    drawBox(t, (float) ex, cy, (float) ez, s);
+                    drawn++;
+                    if (drawn > 200) break;
+                }
+
+                t.draw();
+
+                GL11.glEnable(GL11.GL_CULL_FACE);
+                GL11.glDepthMask(true);
+                GL11.glDisable(GL11.GL_BLEND);
+                GL11.glEnable(GL11.GL_LIGHTING);
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                GL11.glPopMatrix();
+            } catch (Throwable t) {
+                try { GL11.glPopMatrix(); } catch (Throwable t2) { }
             }
-
-            t.draw();
-
-            GL11.glEnable(GL11.GL_CULL_FACE);
-            GL11.glDepthMask(true);
-            GL11.glDisable(GL11.GL_BLEND);
-            GL11.glEnable(GL11.GL_LIGHTING);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glPopMatrix();
         }
 
         static float boxSize(Entity en) {
@@ -1073,35 +1081,31 @@ public class UbmMod {
 
         static void drawBox(Tessellator t, float x, float y, float z, float s) {
             t.setColorRGBA_F(0f, 0f, 0f, 0.8f);
-            // top
             t.addVertex(x - s, y + s, z - s); t.addVertex(x - s, y + s, z + s);
             t.addVertex(x + s, y + s, z + s); t.addVertex(x + s, y + s, z - s);
-            // bottom
             t.addVertex(x - s, y - s, z + s); t.addVertex(x - s, y - s, z - s);
             t.addVertex(x + s, y - s, z - s); t.addVertex(x + s, y - s, z + s);
-            // +Z
             t.addVertex(x - s, y - s, z + s); t.addVertex(x + s, y - s, z + s);
             t.addVertex(x + s, y + s, z + s); t.addVertex(x - s, y + s, z + s);
-            // -Z
             t.addVertex(x + s, y - s, z - s); t.addVertex(x - s, y - s, z - s);
             t.addVertex(x - s, y + s, z - s); t.addVertex(x + s, y + s, z - s);
-            // +X
             t.addVertex(x + s, y - s, z + s); t.addVertex(x + s, y - s, z - s);
             t.addVertex(x + s, y + s, z - s); t.addVertex(x + s, y + s, z + s);
-            // -X
             t.addVertex(x - s, y - s, z - s); t.addVertex(x - s, y - s, z + s);
             t.addVertex(x - s, y + s, z + s); t.addVertex(x - s, y + s, z - s);
         }
 
-        // ====================================================================
-        // RENDER TICK + FPS + CLEAR PARTÍCULAS + APPLY SETTINGS
-        // ====================================================================
+        // ============ RENDER TICK ============
         @SubscribeEvent
         public void onRenderTick(TickEvent.RenderTickEvent e) {
             if (e.phase == TickEvent.Phase.START) {
                 frameLiving = 0; frameDyn = 0; frameTe = 0;
-                if (enabled && !org.lwjgl.opengl.Display.isActive()) {
-                    try { Thread.sleep(UNFOCUS_MS); } catch (InterruptedException ex) { }
+                if (enabled) {
+                    try {
+                        if (!org.lwjgl.opengl.Display.isActive()) {
+                            Thread.sleep(UNFOCUS_MS);
+                        }
+                    } catch (Throwable t) { }
                 }
                 return;
             }
@@ -1109,7 +1113,12 @@ public class UbmMod {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null) return;
 
-            if (!wrapped) { wrapped = true; wrapAll(); }
+            if (!wrapped) {
+                wrapped = true;
+                try { wrapAll(); } catch (Throwable t) {
+                    System.out.println("[UBM] wrapAll geral falhou: " + t);
+                }
+            }
             if (enabled) clearParticles(mc);
 
             frames++;
@@ -1129,44 +1138,73 @@ public class UbmMod {
         @SubscribeEvent
         public void onClientTick(TickEvent.ClientTickEvent e) {
             if (e.phase != TickEvent.Phase.END) return;
-            Minecraft mc = Minecraft.getMinecraft();
-            if (mc == null || mc.theWorld == null) return;
-            if (!(mc.effectRenderer instanceof ThrottledFx)) {
-                mc.effectRenderer = new ThrottledFx(mc.theWorld, mc.renderEngine);
-            }
-            if (enabled) {
-                mc.theWorld.setRainStrength(0.0F);
-                mc.theWorld.setThunderStrength(0.0F);
-            }
+            try {
+                Minecraft mc = Minecraft.getMinecraft();
+                if (mc == null || mc.theWorld == null) return;
+                if (!(mc.effectRenderer instanceof ThrottledFx)) {
+                    mc.effectRenderer = new ThrottledFx(mc.theWorld, mc.renderEngine);
+                }
+                if (enabled) {
+                    mc.theWorld.setRainStrength(0.0F);
+                    mc.theWorld.setThunderStrength(0.0F);
+                }
+            } catch (Throwable t) { }
         }
 
+        // ============ WRAP ============
         @SuppressWarnings("unchecked")
         void wrapAll() {
+            // ----- entidades -----
             try {
                 Map m = RenderManager.instance.entityRenderMap;
-                for (Object o : new ArrayList(m.entrySet())) {
-                    Map.Entry en = (Map.Entry) o;
-                    Object v = en.getValue();
-                    if (!(v instanceof Render) || v instanceof NoRender) continue;
-                    if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
-                    m.put(en.getKey(), new NoRender());
-                }
-            } catch (Throwable t) { }
+                if (m != null) {
+                    for (Object o : new ArrayList(m.entrySet())) {
+                        Map.Entry en = (Map.Entry) o;
+                        if (en == null || en.getKey() == null) continue;
 
+                        Object v = en.getValue();
+                        if (!(v instanceof Render)) continue;
+                        if (v instanceof NoRender) continue;
+
+                        // NUNCA troca o RenderPlayer — ItemRenderer faz cast direto
+                        if (v instanceof RenderPlayer) continue;
+
+                        if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
+
+                        try {
+                            m.put(en.getKey(), new NoRender((Render) v));
+                        } catch (Throwable t) { }
+                    }
+                }
+            } catch (Throwable t) {
+                System.out.println("[UBM] wrapAll entity falhou: " + t);
+            }
+
+            // ----- tile entities -----
             try {
                 Map m = TileEntityRendererDispatcher.instance.mapSpecialRenderers;
-                for (Object o : new ArrayList(m.entrySet())) {
-                    Map.Entry en = (Map.Entry) o;
-                    Object v = en.getValue();
-                    if (!(v instanceof TileEntitySpecialRenderer) || v instanceof NoTesr) continue;
-                    if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
-                    m.put(en.getKey(), new NoTesr());
+                if (m != null) {
+                    for (Object o : new ArrayList(m.entrySet())) {
+                        Map.Entry en = (Map.Entry) o;
+                        if (en == null || en.getKey() == null) continue;
+
+                        Object v = en.getValue();
+                        if (!(v instanceof TileEntitySpecialRenderer)) continue;
+                        if (v instanceof NoTesr) continue;
+                        if (!v.getClass().getName().startsWith("net.minecraft.")) continue;
+
+                        try {
+                            m.put(en.getKey(), new NoTesr((TileEntitySpecialRenderer) v));
+                        } catch (Throwable t) { }
+                    }
                 }
-            } catch (Throwable t) { }
+            } catch (Throwable t) {
+                System.out.println("[UBM] wrapAll tesr falhou: " + t);
+            }
         }
 
         void clearParticles(Minecraft mc) {
-            if (mc.effectRenderer == null) return;
+            if (mc == null || mc.effectRenderer == null) return;
             if (!FX_CHECKED) {
                 FX_CHECKED = true;
                 String[] names = { "fxLayers", "field_78876_b" };
@@ -1191,7 +1229,17 @@ public class UbmMod {
         }
 
         void applySettings(Minecraft mc) {
+            if (mc == null) return;
             GameSettings gs = mc.gameSettings;
+            if (gs == null) return;
+            try {
+                applySettingsInternal(mc, gs);
+            } catch (Throwable t) {
+                System.out.println("[UBM] applySettings falhou: " + t);
+            }
+        }
+
+        void applySettingsInternal(Minecraft mc, GameSettings gs) {
             if (!captured) {
                 captured = true;
                 oFancy = gs.fancyGraphics; oClouds = gs.clouds; oBobbing = gs.viewBobbing;
@@ -1230,7 +1278,7 @@ public class UbmMod {
         @SubscribeEvent
         public void onOverlay(RenderGameOverlayEvent.Text e) {
             Minecraft mc = Minecraft.getMinecraft();
-            if (!mc.gameSettings.showDebugInfo) return;
+            if (mc == null || !mc.gameSettings.showDebugInfo) return;
             e.left.add("");
             e.left.add("\u00A7c[UBM]\u00A7r " + (enabled ? "\u00A7aON" : "\u00A77OFF")
                 + " | fps " + fps + " | mspt " + String.format("%.1f", mspt)
@@ -1245,9 +1293,7 @@ public class UbmMod {
         }
     }
 
-    // ========================================================================
-    // COMANDO
-    // ========================================================================
+    // ================= COMANDO =================
     public static class CmdUbm extends CommandBase {
         @Override public String getCommandName() { return "ubm"; }
         @Override public String getCommandUsage(ICommandSender s) { return "/ubm <0|1>"; }
@@ -1280,7 +1326,7 @@ public class UbmMod {
                 currentBudget = IOAB_BASE_BUDGET;
                 SCORES.clear();
                 s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7a ATIVADO\u00A7r"));
-                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7r IOAB tick + TE dormindo + culling + cubos pretos + HUD simples"));
+                s.addChatMessage(new ChatComponentText("\u00A7c[UBM]\u00A7r IOAB + TE dormindo + culling + cubos + HUD simples"));
             } else {
                 s.addChatMessage(new ChatComponentText("\u00A7cUse /ubm 0 ou /ubm 1"));
             }
