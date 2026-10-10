@@ -77,7 +77,6 @@ public class JjkCoreMod {
     public static final Map<String, Long> DOM_UNTIL = new HashMap<String, Long>();
     public static final Map<String, Integer> DOM_COLOR = new HashMap<String, Integer>();
 
-    // ============ DOMAIN EXPANSION ============
     public static final String[] DOM_NAME = { "Vazio Infinito", "Santuario Malevolente", "Corrente de Maldicoes", "Amor Eterno" };
     public static final String[] DOM_SUB = { "Dentro do infinito, nao ha escapatoria.", "Tudo sera cortado. Nada sobrevive.", "As maldicoes consomem tudo.", "O amor que nunca termina." };
     public static final int DOM_DURATION_MS = 12000;
@@ -85,11 +84,9 @@ public class JjkCoreMod {
     public static final int DOM_CLASH_RADIUS = 24;
     public static final Map<String, int[]> DOM_DUELS = new HashMap<String, int[]>();
 
-    // ============ SEAL POSE ============
     public static final Map<String, Long> SEAL_UNTIL = new HashMap<String, Long>();
     public static final int SEAL_DURATION_MS = 1500;
 
-    // ============ ORBE ESCALAVEL ============
     public static final double ORB_BASE_RANGE = 6.0;
     public static final double ORB_MAX_RANGE = 42.0;
     public static final float ORB_DMG_MIN = 0.5f;
@@ -298,11 +295,9 @@ public class JjkCoreMod {
             }
             int i = idx(c);
             startDomain(p);
-
             long until = System.currentTimeMillis() + SEAL_DURATION_MS;
             SEAL_UNTIL.put(p.getCommandSenderName(), until);
             NET.sendToAll(new MsgSeal(p.getCommandSenderName(), until));
-
             p.addChatMessage(new ChatComponentText(""));
             p.addChatMessage(new ChatComponentText(EnumChatFormatting.DARK_PURPLE + "\u00A7l\u2726 EXPANSAO DE DOMINIO \u2726"));
             p.addChatMessage(new ChatComponentText(EnumChatFormatting.LIGHT_PURPLE + DOM_NAME[i]));
@@ -321,10 +316,7 @@ public class JjkCoreMod {
         @Override
         public void addInformation(ItemStack s, EntityPlayer p, List l, boolean a) {
             String c = getChar(p);
-            if (c.isEmpty()) {
-                l.add(EnumChatFormatting.GRAY + "Escolha um personagem primeiro.");
-                return;
-            }
+            if (c.isEmpty()) { l.add(EnumChatFormatting.GRAY + "Escolha um personagem primeiro."); return; }
             int i = idx(c);
             l.add(EnumChatFormatting.LIGHT_PURPLE + DOM_NAME[i]);
             NBTTagCompound t = nbt(p);
@@ -567,7 +559,24 @@ public class JjkCoreMod {
 
     // ================= MALDICAO =================
     public static class EntityCursed extends EntityMob {
-        public EntityCursed(World w) { super(w); setSize(1.2f, 2f); }
+        public EntityCursed(World w) {
+            super(w);
+            setSize(1.2f, 2f);
+            initAI();
+        }
+        private void initAI() {
+            tasks.addTask(0, new EntityAISwimming(this));
+            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.0D, false));
+            tasks.addTask(3, new EntityAIAttackOnCollide(this, EntityVillager.class, 1.0D, true));
+            tasks.addTask(3, new EntityAIAttackOnCollide(this, EntityNPC.class, 1.0D, true));
+            tasks.addTask(5, new EntityAIWander(this, 0.8D));
+            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 16F));
+            tasks.addTask(7, new EntityAILookIdle(this));
+            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
+            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
+            targetTasks.addTask(3, new EntityAINearestAttackableTarget(this, EntityVillager.class, 0, true));
+            targetTasks.addTask(3, new EntityAINearestAttackableTarget(this, EntityNPC.class, 0, true));
+        }
         @Override protected void entityInit() { super.entityInit(); dataWatcher.addObject(20, (byte) 1); }
         public int getGrau() { return dataWatcher.getWatchableObjectByte(20) & 0xFF; }
         public void setGrau(int g) {
@@ -588,19 +597,6 @@ public class JjkCoreMod {
             getEntityAttribute(SharedMonsterAttributes.movementSpeed).setBaseValue(0.28D);
             getEntityAttribute(SharedMonsterAttributes.attackDamage).setBaseValue(4D);
         }
-        @Override protected void initEntityAI() {
-            tasks.addTask(0, new EntityAISwimming(this));
-            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.0D, false));
-            tasks.addTask(3, new EntityAIAttackOnCollide(this, EntityVillager.class, 1.0D, true));
-            tasks.addTask(3, new EntityAIAttackOnCollide(this, EntityNPC.class, 1.0D, true));
-            tasks.addTask(5, new EntityAIWander(this, 0.8D));
-            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 16F));
-            tasks.addTask(7, new EntityAILookIdle(this));
-            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
-            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
-            targetTasks.addTask(3, new EntityAINearestAttackableTarget(this, EntityVillager.class, 0, true));
-            targetTasks.addTask(3, new EntityAINearestAttackableTarget(this, EntityNPC.class, 0, true));
-        }
         @Override public boolean getCanSpawnHere() { return worldObj.difficultySetting.getDifficultyId() > 0 && super.getCanSpawnHere(); }
         @Override protected void dropFewItems(boolean hit, int loot) { int n = getGrau(); for (int i = 0; i < n; i++) dropItem(Items.ender_pearl, 1); }
         @Override public void onDeath(DamageSource s) {
@@ -620,7 +616,17 @@ public class JjkCoreMod {
 
     // ================= NPC =================
     public static class EntityNPC extends EntityCreature {
-        public EntityNPC(World w) { super(w); setSize(0.8f, 2f); }
+        public EntityNPC(World w) {
+            super(w);
+            setSize(0.8f, 2f);
+            initAI();
+        }
+        private void initAI() {
+            tasks.addTask(0, new EntityAISwimming(this));
+            tasks.addTask(5, new EntityAIWander(this, 0.7D));
+            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 12F));
+            tasks.addTask(7, new EntityAILookIdle(this));
+        }
         @Override protected void entityInit() { super.entityInit(); dataWatcher.addObject(20, (byte) 0); }
         public int getKind() { return dataWatcher.getWatchableObjectByte(20) & 0xFF; }
         public void setKind(int k) { dataWatcher.updateObject(20, (byte) k); }
@@ -629,15 +635,9 @@ public class JjkCoreMod {
             getEntityAttribute(SharedMonsterAttributes.maxHealth).setBaseValue(40D);
             getEntityAttribute(SharedMonsterAttributes.movementSpeed).setBaseValue(0.3D);
         }
-        @Override protected void initEntityAI() {
-            tasks.addTask(0, new EntityAISwimming(this));
-            tasks.addTask(5, new EntityAIWander(this, 0.7D));
-            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 12F));
-            tasks.addTask(7, new EntityAILookIdle(this));
-        }
         @Override public boolean isAIEnabled() { return true; }
         @Override public boolean getCanSpawnHere() { return true; }
-        @Override public boolean interact(EntityPlayer p) {
+        @Override public boolean interactFirst(EntityPlayer p) {
             if (worldObj.isRemote) return true;
             int k = getKind();
             String[] l;
@@ -653,7 +653,19 @@ public class JjkCoreMod {
 
     // ================= BOSSES =================
     public static class EBossSukuna extends EntityMob {
-        public EBossSukuna(World w) { super(w); setSize(1.5f, 3f); }
+        public EBossSukuna(World w) {
+            super(w);
+            setSize(1.5f, 3f);
+            initAI();
+        }
+        private void initAI() {
+            tasks.addTask(0, new EntityAISwimming(this));
+            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.2D, false));
+            tasks.addTask(5, new EntityAIWander(this, 1D));
+            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 32F));
+            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
+            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
+        }
         @Override protected void entityInit() { super.entityInit(); }
         @Override protected void applyEntityAttributes() {
             super.applyEntityAttributes();
@@ -661,14 +673,6 @@ public class JjkCoreMod {
             getEntityAttribute(SharedMonsterAttributes.movementSpeed).setBaseValue(0.35D);
             getEntityAttribute(SharedMonsterAttributes.attackDamage).setBaseValue(12D);
             getEntityAttribute(SharedMonsterAttributes.knockbackResistance).setBaseValue(1D);
-        }
-        @Override protected void initEntityAI() {
-            tasks.addTask(0, new EntityAISwimming(this));
-            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.2D, false));
-            tasks.addTask(5, new EntityAIWander(this, 1D));
-            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 32F));
-            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
-            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
         }
         @Override public boolean isAIEnabled() { return true; }
         @Override public boolean getCanSpawnHere() { return false; }
@@ -685,7 +689,18 @@ public class JjkCoreMod {
 
     public static class EBossSukunaHeian extends EntityMob {
         int ac = 0;
-        public EBossSukunaHeian(World w) { super(w); setSize(3.5f, 6.5f); }
+        public EBossSukunaHeian(World w) {
+            super(w);
+            setSize(3.5f, 6.5f);
+            initAI();
+        }
+        private void initAI() {
+            tasks.addTask(0, new EntityAISwimming(this));
+            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1D, false));
+            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 48F));
+            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
+            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
+        }
         @Override protected void entityInit() { super.entityInit(); }
         @Override protected void applyEntityAttributes() {
             super.applyEntityAttributes();
@@ -694,13 +709,6 @@ public class JjkCoreMod {
             getEntityAttribute(SharedMonsterAttributes.attackDamage).setBaseValue(25D);
             getEntityAttribute(SharedMonsterAttributes.knockbackResistance).setBaseValue(1D);
             getEntityAttribute(SharedMonsterAttributes.followRange).setBaseValue(48D);
-        }
-        @Override protected void initEntityAI() {
-            tasks.addTask(0, new EntityAISwimming(this));
-            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1D, false));
-            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 48F));
-            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
-            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
         }
         @Override public boolean isAIEnabled() { return true; }
         @Override public boolean getCanSpawnHere() { return false; }
@@ -737,7 +745,18 @@ public class JjkCoreMod {
     public static class EBossGojo extends EntityMob {
         int ac = 0;
         int phase = 0;
-        public EBossGojo(World w) { super(w); setSize(1f, 2.2f); }
+        public EBossGojo(World w) {
+            super(w);
+            setSize(1f, 2.2f);
+            initAI();
+        }
+        private void initAI() {
+            tasks.addTask(0, new EntityAISwimming(this));
+            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.2D, false));
+            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 64F));
+            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
+            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
+        }
         @Override protected void entityInit() { super.entityInit(); }
         @Override protected void applyEntityAttributes() {
             super.applyEntityAttributes();
@@ -746,13 +765,6 @@ public class JjkCoreMod {
             getEntityAttribute(SharedMonsterAttributes.attackDamage).setBaseValue(30D);
             getEntityAttribute(SharedMonsterAttributes.knockbackResistance).setBaseValue(1D);
             getEntityAttribute(SharedMonsterAttributes.followRange).setBaseValue(64D);
-        }
-        @Override protected void initEntityAI() {
-            tasks.addTask(0, new EntityAISwimming(this));
-            tasks.addTask(2, new EntityAIAttackOnCollide(this, EntityPlayer.class, 1.2D, false));
-            tasks.addTask(6, new EntityAIWatchClosest(this, EntityPlayer.class, 64F));
-            targetTasks.addTask(1, new EntityAIHurtByTarget(this, false));
-            targetTasks.addTask(2, new EntityAINearestAttackableTarget(this, EntityPlayer.class, 0, true));
         }
         @Override public boolean isAIEnabled() { return true; }
         @Override public boolean getCanSpawnHere() { return false; }
