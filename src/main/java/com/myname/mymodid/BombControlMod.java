@@ -98,14 +98,19 @@ public class BombControlMod {
     public static SimpleNetworkWrapper NET;
     public static Item controller;
     public static Item shipItem;
+    public static Item bombItem;
 
     public static final String[] BOMB_NAMES = {"Bomba Convencional", "Bomba Incendiaria", "Bomba Termobarica", "Bomba Nuclear",
-        "Nave Destruidora", "Nuclear Personalizada"};
+        "Nave Destruidora", "Nuclear Personalizada", "PC Bomba", "Bomba RTX (Placa de Video)", "Pilha Gigante", "Aranha Bomba",
+        "Big Bang", "Ragnarok", "Humano Mais Forte", "Ventilador Bomba"};
     public static final String[] BOMB_INFO = {"Explosao forte, cratera media", "Napalm: cratera e fogo por todo lado",
-        "Onda de pressao enorme", "Cogumelo atomico e radiacao", "Destroi o planeta (cutscene)", "Voce monta a sua (aba Bomba 6)"};
-    public static final int[] BOMB_RADIUS = {11, 15, 24, 42, 64, 40};
-    // bits: 1 = fogo, 2 = radiacao, 4 = cogumelo
-    public static final int[] BOMB_FLAGS = {0, 1, 4, 7, 7, 7};
+        "Onda de pressao enorme", "Cogumelo atomico e radiacao", "Destroi o planeta (cutscene)", "Voce monta a sua (aba Bomba 6)",
+        "Um PC que vira bomba (cutscene)", "Ventoinha acelera e explode (camera lenta)", "Sobrecarga eletrica com raios (cutscene)",
+        "Aranha mecanica corre ate voce e explode", "O universo nasce de um ponto (cutscene)", "Martelo, raios e o fim dos deuses",
+        "Soco a 0000000000.9 de velocidade", "Gira, pega fogo, solta fumaca e explode"};
+    public static final int[] BOMB_RADIUS = {11, 15, 24, 42, 64, 40, 52, 46, 48, 40, 70, 60, 56, 36};
+    // bits: 1 = fogo, 2 = radiacao, 4 = cogumelo, 8 = SEM destruicao (so animacao/visual)
+    public static final int[] BOMB_FLAGS = {0, 1, 4, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 5};
 
     static final Random RAND = new Random();
     static final ConcurrentLinkedQueue<Runnable> SERVER_TASKS = new ConcurrentLinkedQueue<Runnable>();
@@ -127,6 +132,8 @@ public class BombControlMod {
         GameRegistry.registerItem(controller, "bomb_controller");
         shipItem = new ItemShip();
         GameRegistry.registerItem(shipItem, "ship_item");
+        bombItem = new ItemBombPlace();
+        GameRegistry.registerItem(bombItem, "bomb_item");
 
         EntityRegistry.registerModEntity(EntityBomb.class, "BombEntity", 1, instance, 256, 1, true);
         EntityRegistry.registerModEntity(EntityShip.class, "ShipEntity", 2, instance, 256, 5, false);
@@ -173,7 +180,11 @@ public class BombControlMod {
             EntityPlayerMP p = getCommandSenderAsPlayer(s);
             giveOrDrop(p, new ItemStack(controller));
             giveOrDrop(p, new ItemStack(shipItem));
-            tell(p, "Voce recebeu o Controle de Bomba e a Nave Destruidora.");
+            for (int i = 0; i < BOMB_NAMES.length; i++) {
+                if (i == 4) continue;
+                giveOrDrop(p, new ItemStack(bombItem, 1, i));
+            }
+            tell(p, "Voce recebeu o Controle de Bomba, a Nave Destruidora e as bombas colocaveis.");
         }
     }
 
@@ -465,6 +476,18 @@ public class BombControlMod {
         return v < a ? a : (v > b ? b : v);
     }
 
+    static boolean isPlacedKind(int t) {
+        return t == 4 || t >= 6;
+    }
+
+    static EntityShip spawnPlaced(World w, int kind, double x, double y, double z, int radius, int flags, int hue, float yaw) {
+        EntityShip s = new EntityShip(w);
+        s.setKind(kind, radius, flags, hue);
+        s.setLocationAndAngles(x, y, z, yaw, 0.0F);
+        w.spawnEntityInWorld(s);
+        return s;
+    }
+
     static void handleLaunch(EntityPlayerMP pl, MsgLaunch m) {
         World w = pl.worldObj;
         if (m.mode == 1) {
@@ -476,33 +499,31 @@ public class BombControlMod {
             return;
         }
         if (m.mode == 3) {
-            detonateNearestShip(pl);
+            detonateNearestPlaced(pl, m.flags & 8);
             return;
         }
         if (m.mode == 4) {
             restoreSky(pl);
             return;
         }
-        int type = clamp(m.type, 0, 5);
+        int type = clamp(m.type, 0, 13);
         int bx = MathHelper.floor_double(m.x);
         int bz = MathHelper.floor_double(m.z);
         boolean loaded = w.getChunkProvider().chunkExists(bx >> 4, bz >> 4);
         int top = w.getHeightValue(bx, bz);
         if (top < 1) top = 1;
-        if (type == 4) {
-            EntityShip s = new EntityShip(w);
-            s.setLocationAndAngles(bx + 0.5D, top, bz + 0.5D, RAND.nextFloat() * 360.0F, 0.0F);
-            w.spawnEntityInWorld(s);
-            tell(pl, "Nave Destruidora posicionada. Use 'Detonar nave' no controle (ou clique nela com o controle).");
-            return;
-        }
         int radius = BOMB_RADIUS[type];
-        int flags = BOMB_FLAGS[type];
+        int flags = BOMB_FLAGS[type] | (m.flags & 8);
         int hue = 0;
         if (type == 5) {
             radius = clamp(m.radius, 8, 70);
-            flags = m.flags & 7;
+            flags = m.flags & 15;
             hue = clamp(m.hue, 0, 359);
+        }
+        if (isPlacedKind(type) || m.mode == 5) {
+            spawnPlaced(w, type, bx + 0.5D, top, bz + 0.5D, radius, flags, hue, RAND.nextFloat() * 360.0F);
+            tell(pl, BOMB_NAMES[type] + " colocada no chao. Use DETONAR no controle (ou clique nela com o controle).");
+            return;
         }
         if (!loaded) {
             detonateAtSurface(w, type, bx + 0.5D, bz + 0.5D, radius, flags, hue);
@@ -523,7 +544,8 @@ public class BombControlMod {
         int gy = w.getHeightValue(ix, iz) - 1;
         if (gy < 1) gy = 1;
         double y = gy + 1.0D;
-        sendFx(w, 0, type, x, y, z, radius, flags, hue, 0, false);
+        sendFx(w, 0, type, x, y, z, radius, flags & 7, hue, 0, false);
+        if ((flags & 8) != 0) return;
         shock(w, x, y, z, radius, (flags & 2) != 0);
         JOBS.add(new CraterJob(w, ix, gy, iz, radius, type, (flags & 1) != 0));
     }
@@ -745,39 +767,62 @@ public class BombControlMod {
         }
     }
 
-    // ---- nave destruidora: cutscene + destruicao ----
-    static void detonateShip(World w, EntityShip ship) {
+    // ---- bombas colocadas: nave / PC / RTX (cutscene + destruicao) e bombas normais ----
+    static void detonatePlaced(World w, EntityShip s) {
+        int kind = s.kind();
+        if (isPlacedKind(kind)) {
+            detonateCutscene(w, s, kind);
+        } else {
+            double x = s.posX;
+            double z = s.posZ;
+            int r = s.pRadius();
+            int f = s.pFlags();
+            int h = s.pHue();
+            if ((f & 8) == 0) s.setDead();
+            detonateAtSurface(w, kind, x, z, r, f, h);
+        }
+    }
+
+    static void detonateCutscene(World w, EntityShip ship, final int kind) {
         final World fw = w;
         final double x = ship.posX;
         final double z = ship.posZ;
         final int ix = MathHelper.floor_double(x);
         final int iz = MathHelper.floor_double(z);
         final int gy = Math.max(1, w.getHeightValue(ix, iz) - 1);
-        final int dur = CUTSCENE_SECONDS * 20;
+        final int dur = (kind == 6 ? 24 : 22) * 20;
+        final int R = BOMB_RADIUS[kind];
+        final boolean noDestroy = (ship.pFlags() & 8) != 0;
+        if (noDestroy) {
+            sendFx(w, 1, kind, x, gy + 1.0D, z, R, 7, 0, dur, true);
+            return;
+        }
         ship.setDead();
         for (int i = 0; i < w.playerEntities.size(); i++) {
             EntityPlayer p = (EntityPlayer) w.playerEntities.get(i);
             p.addPotionEffect(new PotionEffect(Potion.resistance.id, dur + 1000, 4));
             p.addPotionEffect(new PotionEffect(Potion.fireResistance.id, dur + 1000, 0));
         }
-        sendFx(w, 1, 4, x, gy + 1.0D, z, 64, 7, 0, dur, true);
-        JOBS.add(new CraterJob(w, ix, gy, iz, 64, 4, true));
-        JOBS.add(new ChasmJob(w, ix, iz, 230));
+        sendFx(w, 1, kind, x, gy + 1.0D, z, R, 7, 0, dur, true);
+        JOBS.add(new CraterJob(w, ix, gy, iz, R, kind, true));
+        if (kind == 4) JOBS.add(new ChasmJob(w, ix, iz, 230));
         later(dur - 40, new Runnable() {
             @Override
             public void run() {
-                sendFx(fw, 0, 4, x, gy + 1.0D, z, 64, 7, 0, 0, false);
-                shock(fw, x, gy + 1.0D, z, 64, true);
+                sendFx(fw, 0, kind, x, gy + 1.0D, z, R, 7, 0, 0, false);
+                shock(fw, x, gy + 1.0D, z, R, true);
             }
         });
         later(dur, new Runnable() {
             @Override
             public void run() {
-                rescuePlayers(fw, x, z, 64);
-                fw.getWorldInfo().setRaining(true);
-                fw.getWorldInfo().setThundering(true);
-                fw.getWorldInfo().setRainTime(12000);
-                fw.getWorldInfo().setThunderTime(12000);
+                rescuePlayers(fw, x, z, R);
+                if (kind == 4) {
+                    fw.getWorldInfo().setRaining(true);
+                    fw.getWorldInfo().setThundering(true);
+                    fw.getWorldInfo().setRainTime(12000);
+                    fw.getWorldInfo().setThunderTime(12000);
+                }
             }
         });
     }
@@ -798,7 +843,7 @@ public class BombControlMod {
         }
     }
 
-    static void detonateNearestShip(EntityPlayerMP pl) {
+    static void detonateNearestPlaced(EntityPlayerMP pl, int noFlag) {
         World w = pl.worldObj;
         EntityShip best = null;
         double bd = 1.0E30D;
@@ -814,10 +859,11 @@ public class BombControlMod {
             }
         }
         if (best == null) {
-            tell(pl, "Nenhuma Nave Destruidora no mundo. Posicione uma primeiro.");
+            tell(pl, "Nenhuma bomba colocada no mundo. Coloque uma primeiro.");
             return;
         }
-        detonateShip(w, best);
+        best.setKind(best.kind(), best.pRadius(), (best.pFlags() & 7) | noFlag, best.pHue());
+        detonatePlaced(w, best);
     }
 
     // ---- Sol e Lua ----
@@ -964,6 +1010,51 @@ public class BombControlMod {
         }
     }
 
+    public static class ItemBombPlace extends Item {
+        public ItemBombPlace() {
+            setMaxStackSize(16);
+            setHasSubtypes(true);
+            setUnlocalizedName("bombcontrol.bombitem");
+            setTextureName("stick");
+            setCreativeTab(CreativeTabs.tabMisc);
+        }
+
+        @Override
+        public String getItemStackDisplayName(ItemStack s) {
+            return BOMB_NAMES[clamp(s.getItemDamage(), 0, 13)] + " (colocavel)";
+        }
+
+        @Override
+        @SideOnly(Side.CLIENT)
+        public void getSubItems(Item it, CreativeTabs tab, List list) {
+            for (int i = 0; i < BOMB_NAMES.length; i++) {
+                if (i == 4) continue;
+                list.add(new ItemStack(it, 1, i));
+            }
+        }
+
+        @Override
+        @SideOnly(Side.CLIENT)
+        public void addInformation(ItemStack s, EntityPlayer p, List l, boolean adv) {
+            l.add("Clique no chao para colocar");
+            l.add("Detone com o Controle de Bomba");
+        }
+
+        @Override
+        public boolean onItemUse(ItemStack s, EntityPlayer p, World w, int x, int y, int z, int side, float hx, float hy, float hz) {
+            if (w.isRemote) return true;
+            int type = clamp(s.getItemDamage(), 0, 13);
+            double px = x + 0.5D + Facing.offsetsXForSide[side];
+            double py = y + Facing.offsetsYForSide[side];
+            double pz = z + 0.5D + Facing.offsetsZForSide[side];
+            int radius = type == 5 ? 40 : BOMB_RADIUS[type];
+            int hue = type == 5 ? 20 : 0;
+            spawnPlaced(w, type, px, py, pz, radius, BOMB_FLAGS[type], hue, p.rotationYaw);
+            if (!p.capabilities.isCreativeMode) s.stackSize--;
+            return true;
+        }
+    }
+
     // ============================================================================================
     // ENTIDADES
     // ============================================================================================
@@ -1029,8 +1120,8 @@ public class BombControlMod {
         public void onUpdate() {
             super.onUpdate();
             life++;
-            motionY -= 0.06D;
-            if (motionY < -3.2D) motionY = -3.2D;
+            motionY -= 0.04D;
+            if (motionY < -1.4D) motionY = -1.4D;
             moveEntity(motionX, motionY, motionZ);
             if (worldObj.isRemote) {
                 if (life == 2) worldObj.playSound(posX, posY, posZ, "fireworks.launch", 6.0F, 0.5F, false);
@@ -1044,7 +1135,10 @@ public class BombControlMod {
         }
     }
 
+    // Bomba/nave colocada no chao. kind: 0-3,5 = bombas normais; 4 = nave; 6 = PC bomba; 7 = bomba RTX
     public static class EntityShip extends Entity {
+        int lastKind = -1;
+
         public EntityShip(World w) {
             super(w);
             setSize(3.2F, 7.5F);
@@ -1053,14 +1147,73 @@ public class BombControlMod {
 
         @Override
         protected void entityInit() {
+            dataWatcher.addObject(20, Integer.valueOf(4));
+            dataWatcher.addObject(21, Integer.valueOf(40));
+            dataWatcher.addObject(22, Integer.valueOf(7));
+            dataWatcher.addObject(23, Integer.valueOf(20));
+        }
+
+        public void setKind(int kind, int radius, int flags, int hue) {
+            dataWatcher.updateObject(20, Integer.valueOf(kind));
+            dataWatcher.updateObject(21, Integer.valueOf(radius));
+            dataWatcher.updateObject(22, Integer.valueOf(flags));
+            dataWatcher.updateObject(23, Integer.valueOf(hue));
+            applySize(kind);
+        }
+
+        public int kind() {
+            return dataWatcher.getWatchableObjectInt(20);
+        }
+
+        public int pRadius() {
+            return dataWatcher.getWatchableObjectInt(21);
+        }
+
+        public int pFlags() {
+            return dataWatcher.getWatchableObjectInt(22);
+        }
+
+        public int pHue() {
+            return dataWatcher.getWatchableObjectInt(23);
+        }
+
+        void applySize(int kind) {
+            lastKind = kind;
+            if (kind == 4) {
+                setSize(3.2F, 7.5F);
+            } else if (kind == 6) {
+                setSize(1.8F, 3.0F);
+            } else if (kind == 7) {
+                setSize(2.6F, 1.8F);
+            } else if (kind == 8) {
+                setSize(1.4F, 2.4F);
+            } else if (kind == 9) {
+                setSize(3.4F, 1.8F);
+            } else if (kind == 10) {
+                setSize(1.6F, 2.6F);
+            } else if (kind == 11) {
+                setSize(1.2F, 2.4F);
+            } else if (kind == 12) {
+                setSize(1.2F, 2.6F);
+            } else if (kind == 13) {
+                setSize(1.4F, 2.4F);
+            } else {
+                setSize(1.2F, 2.7F);
+            }
         }
 
         @Override
         protected void readEntityFromNBT(NBTTagCompound n) {
+            int k = n.hasKey("pk") ? n.getInteger("pk") : 4;
+            setKind(k, n.getInteger("pr"), n.getInteger("pf"), n.getInteger("ph"));
         }
 
         @Override
         protected void writeEntityToNBT(NBTTagCompound n) {
+            n.setInteger("pk", kind());
+            n.setInteger("pr", pRadius());
+            n.setInteger("pf", pFlags());
+            n.setInteger("ph", pHue());
         }
 
         @Override
@@ -1076,6 +1229,7 @@ public class BombControlMod {
         @Override
         public void onUpdate() {
             super.onUpdate();
+            if (kind() != lastKind) applySize(kind());
             motionY -= 0.04D;
             moveEntity(0.0D, motionY, 0.0D);
             if (onGround) motionY = 0.0D;
@@ -1085,7 +1239,7 @@ public class BombControlMod {
         public boolean interactFirst(EntityPlayer p) {
             ItemStack s = p.getHeldItem();
             if (s != null && s.getItem() == controller) {
-                if (!worldObj.isRemote) detonateShip(worldObj, this);
+                if (!worldObj.isRemote) detonatePlaced(worldObj, this);
                 return true;
             }
             return false;
@@ -1095,7 +1249,8 @@ public class BombControlMod {
         public boolean attackEntityFrom(DamageSource src, float amt) {
             if (!worldObj.isRemote && !isDead && src.getEntity() instanceof EntityPlayer
                 && ((EntityPlayer) src.getEntity()).isSneaking()) {
-                entityDropItem(new ItemStack(shipItem), 0.5F);
+                int k = kind();
+                entityDropItem(k == 4 ? new ItemStack(shipItem) : new ItemStack(bombItem, 1, k), 0.5F);
                 setDead();
                 return true;
             }
@@ -1115,6 +1270,7 @@ public class BombControlMod {
         static double tgtX = Double.NaN, tgtZ = Double.NaN;
         static int cRadius = 40, cHue = 20, cHeight = 150;
         static boolean cFire = true, cRad = true, cMush = true;
+        static boolean destroy = true;
         static final ArrayList<ExFx> FX = new ArrayList<ExFx>();
         static SkyFx skyFx = null;
         static final SkyRenderer SKY = new SkyRenderer();
@@ -1125,6 +1281,7 @@ public class BombControlMod {
             RenderingRegistry.registerEntityRenderingHandler(EntityShip.class, new RenderShip());
             MinecraftForgeClient.registerItemRenderer(controller, new ControllerRenderer());
             MinecraftForgeClient.registerItemRenderer(shipItem, new ShipItemRenderer());
+            MinecraftForgeClient.registerItemRenderer(bombItem, new BombItemRenderer());
             Events ev = new Events();
             MinecraftForge.EVENT_BUS.register(ev);
             FMLCommonHandler.instance().bus().register(ev);
@@ -1137,7 +1294,7 @@ public class BombControlMod {
                 FX.add(new ExFx(m.x, m.y, m.z, m.radius, m.type, m.flags, m.hue));
                 while (FX.size() > 6) FX.remove(0);
             } else if (m.kind == 1) {
-                mc.displayGuiScreen(new GuiCutscene(m.ticks / 20.0F));
+                mc.displayGuiScreen(new GuiCutscene(m.ticks / 20.0F, m.type == 4 ? 0 : m.type - 5));
             } else if (m.kind == 2 || m.kind == 3) {
                 skyFx = new SkyFx(m.kind == 2);
             }
@@ -1156,7 +1313,7 @@ public class BombControlMod {
             m.y = y;
             m.z = z;
             m.radius = cRadius;
-            m.flags = (cFire ? 1 : 0) | (cRad ? 2 : 0) | (cMush ? 4 : 0);
+            m.flags = (cFire ? 1 : 0) | (cRad ? 2 : 0) | (cMush ? 4 : 0) | (destroy ? 0 : 8);
             m.hue = cHue;
             m.height = cHeight;
             NET.sendToServer(m);
@@ -1338,6 +1495,22 @@ public class BombControlMod {
                     tint = Gfx.hsv(hue / 360.0F, 0.85F, 1.0F);
                 } else if (type == 4) {
                     tint = new float[] {0.75F, 0.25F, 1.0F};
+                } else if (type == 6) {
+                    tint = new float[] {0.4F, 0.8F, 1.0F};
+                } else if (type == 7) {
+                    tint = new float[] {0.5F, 1.0F, 0.2F};
+                } else if (type == 8) {
+                    tint = new float[] {0.5F, 0.8F, 1.0F};
+                } else if (type == 9) {
+                    tint = new float[] {1.0F, 0.3F, 0.2F};
+                } else if (type == 10) {
+                    tint = new float[] {0.9F, 0.5F, 1.0F};
+                } else if (type == 11) {
+                    tint = new float[] {1.0F, 0.6F, 0.2F};
+                } else if (type == 12) {
+                    tint = new float[] {1.0F, 0.9F, 0.4F};
+                } else if (type == 13) {
+                    tint = new float[] {1.0F, 0.5F, 0.1F};
                 }
             }
 
@@ -1782,6 +1955,23 @@ public class BombControlMod {
 
         // Bombas: nariz em +Z, comprimento em torno de 2.4
         static void drawBomb(int type, int hue, float time) {
+            if (type == 6) {
+                GL11.glPushMatrix();
+                GL11.glRotatef(90.0F, 1.0F, 0.0F, 0.0F);
+                GL11.glTranslatef(0.0F, -1.05F, 0.0F);
+                pc(time, 0.2F);
+                GL11.glPopMatrix();
+                return;
+            }
+            if (type == 7) {
+                GL11.glPushMatrix();
+                GL11.glRotatef(90.0F, 1.0F, 0.0F, 0.0F);
+                GL11.glScalef(1.4F, 1.4F, 1.4F);
+                GL11.glTranslatef(0.0F, -0.35F, 0.0F);
+                gpu(time * 200.0F, 0.2F, time);
+                GL11.glPopMatrix();
+                return;
+            }
             if (type == 4) {
                 GL11.glPushMatrix();
                 GL11.glScalef(0.2F, 0.2F, 0.2F);
@@ -1876,6 +2066,226 @@ public class BombControlMod {
                 }
                 GL11.glEnable(GL11.GL_LIGHTING);
             }
+            GL11.glDisable(GL11.GL_NORMALIZE);
+        }
+
+        // ---------------- PC e placa de video ----------------
+        static float[] rgb(float t, float heat) {
+            float[] h = hsv(t * 0.35F, 0.9F, 1.0F);
+            float k = Math.max(0.0F, Math.min(1.0F, (heat - 0.25F) / 0.75F));
+            return new float[] {lerp(h[0], 1.0F, k), lerp(h[1], 0.12F, k), lerp(h[2], 0.05F, k)};
+        }
+
+        // ventoinha com eixo em +Z, centrada na origem
+        static void fan(float r, int blades, float angle, float[] glow) {
+            GL11.glEnable(GL11.GL_LIGHTING);
+            col(0.06F, 0.06F, 0.07F);
+            DSK.draw(r * 0.88F, r, 24, 1);
+            GL11.glPushMatrix();
+            GL11.glRotatef(angle, 0.0F, 0.0F, 1.0F);
+            col(0.10F, 0.10F, 0.12F);
+            for (int i = 0; i < blades; i++) {
+                GL11.glPushMatrix();
+                GL11.glRotatef(i * 360.0F / blades, 0.0F, 0.0F, 1.0F);
+                GL11.glRotatef(28.0F, 1.0F, 0.0F, 0.0F);
+                box(r * 0.16F, -r * 0.17F, -0.004D, r * 0.86F, r * 0.17F, 0.004D);
+                GL11.glPopMatrix();
+            }
+            GL11.glPopMatrix();
+            col(0.2F, 0.2F, 0.24F);
+            CYL.draw(r * 0.16F, r * 0.16F, 0.03F, 12, 1);
+            GL11.glDisable(GL11.GL_LIGHTING);
+            col(glow[0], glow[1], glow[2]);
+            GL11.glPushMatrix();
+            GL11.glTranslatef(0.0F, 0.0F, 0.002F);
+            DSK.draw(r * 1.0F, r * 1.07F, 24, 1);
+            GL11.glPopMatrix();
+            GL11.glEnable(GL11.GL_LIGHTING);
+        }
+
+        static float[] gpuCenter(int part) {
+            if (part == 2) return new float[] {-0.52F, 0.35F, 0.2F};
+            if (part == 3) return new float[] {0.0F, 0.35F, 0.2F};
+            if (part == 4) return new float[] {0.52F, 0.35F, 0.2F};
+            return new float[] {0.0F, 0.0F, 0.0F};
+        }
+
+        // GPU: largura 1.6 (x -0.8..0.8), altura 0.7, frente em +Z. Partes 0..6; as ventoinhas (2,3,4) sao centradas na origem local.
+        static void gpuPart(int part, float spin, float heat, float t) {
+            modelBegin();
+            GL11.glEnable(GL11.GL_LIGHTING);
+            float[] g = rgb(t, heat);
+            float[] gl = {lerp(0.35F, 1.0F, heat), lerp(0.95F, 0.1F, heat), lerp(0.15F, 0.05F, heat)};
+            if (part == 0) {
+                col(0.04F, 0.06F, 0.05F);
+                box(-0.8, 0.0, -0.05, 0.8, 0.7, 0.02);
+                col(0.14F, 0.14F, 0.16F);
+                box(-0.8, 0.0, -0.075, 0.8, 0.7, -0.05);
+                col(0.85F, 0.7F, 0.2F);
+                box(-0.55, -0.1, -0.04, 0.3, 0.0, 0.0);
+            } else if (part == 1) {
+                col(0.08F, 0.08F, 0.10F);
+                box(-0.8, 0.0, 0.02, 0.8, 0.7, 0.2);
+                col(0.16F, 0.16F, 0.19F);
+                box(-0.8, 0.66, 0.02, 0.8, 0.7, 0.23);
+                box(-0.8, 0.0, 0.02, 0.8, 0.04, 0.23);
+                GL11.glDisable(GL11.GL_LIGHTING);
+                col(gl[0], gl[1], gl[2]);
+                box(-0.35, 0.6, 0.2, 0.35, 0.63, 0.235);
+                box(-0.7, 0.05, 0.2, -0.62, 0.08, 0.235);
+                GL11.glEnable(GL11.GL_LIGHTING);
+            } else if (part >= 2 && part <= 4) {
+                fan(0.24F, 9, part == 3 ? -spin : spin, g);
+            } else if (part == 5) {
+                col(0.7F, 0.72F, 0.75F);
+                box(-0.86, -0.1, -0.06, -0.8, 0.8, 0.22);
+                col(0.03F, 0.03F, 0.04F);
+                box(-0.87, 0.1, 0.0, -0.84, 0.2, 0.18);
+                box(-0.87, 0.28, 0.0, -0.84, 0.38, 0.18);
+                box(-0.87, 0.46, 0.0, -0.84, 0.56, 0.18);
+            } else {
+                col(0.15F, 0.15F, 0.17F);
+                box(0.45, 0.7, 0.0, 0.75, 0.78, 0.14);
+                col(0.8F, 0.45F, 0.2F);
+                for (int i = 0; i < 3; i++) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(-0.6F, 0.74F, 0.04F + 0.05F * i);
+                    GL11.glRotatef(90.0F, 0.0F, 1.0F, 0.0F);
+                    CYL.draw(0.018F, 0.018F, 1.1F, 8, 1);
+                    GL11.glPopMatrix();
+                }
+            }
+        }
+
+        static void gpu(float spin, float heat, float t) {
+            for (int p = 0; p < 7; p++) {
+                float[] c = gpuCenter(p);
+                GL11.glPushMatrix();
+                GL11.glTranslatef(c[0], c[1], c[2]);
+                gpuPart(p, spin, heat, t);
+                GL11.glPopMatrix();
+            }
+            GL11.glDisable(GL11.GL_NORMALIZE);
+        }
+
+        // PC torre: x -0.4..0.4, y 0..2.2 (com dinamites), z -0.45..0.45, frente em +Z. Partes 0..7.
+        static void pcPart(int part, float t, float heat) {
+            modelBegin();
+            GL11.glEnable(GL11.GL_LIGHTING);
+            float[] g = rgb(t, heat);
+            float spin = t * (240.0F + heat * 1800.0F);
+            if (part == 0) {
+                col(0.10F, 0.10F, 0.12F);
+                box(-0.4, 0.0, -0.45, 0.4, 1.7, -0.42);
+                box(-0.4, 1.67, -0.45, 0.4, 1.7, 0.45);
+                box(-0.4, 0.0, -0.45, 0.4, 0.03, 0.45);
+                box(-0.4, 0.0, -0.45, -0.37, 1.7, 0.45);
+                col(0.04F, 0.04F, 0.05F);
+                box(-0.38, -0.05, -0.43, -0.28, 0.0, -0.33);
+                box(0.28, -0.05, -0.43, 0.38, 0.0, -0.33);
+                box(-0.38, -0.05, 0.33, -0.28, 0.0, 0.43);
+                box(0.28, -0.05, 0.33, 0.38, 0.0, 0.43);
+            } else if (part == 1) {
+                col(0.13F, 0.13F, 0.16F);
+                box(-0.4, 0.0, 0.42, 0.4, 1.7, 0.45);
+                col(0.05F, 0.05F, 0.06F);
+                for (int i = 0; i < 6; i++) {
+                    box(-0.3, 0.2 + 0.15 * i, 0.45, 0.2, 0.24 + 0.15 * i, 0.46);
+                }
+                GL11.glDisable(GL11.GL_LIGHTING);
+                col(g[0], g[1], g[2]);
+                box(-0.36, 0.1, 0.45, -0.32, 1.6, 0.47);
+                if (heat < 0.5F) {
+                    col(0.2F, 1.0F, 0.4F);
+                } else {
+                    col(1.0F, 0.15F, 0.1F);
+                }
+                box(0.25, 1.5, 0.45, 0.33, 1.58, 0.48);
+                GL11.glEnable(GL11.GL_LIGHTING);
+            } else if (part == 2) {
+                col(0.2F, 0.2F, 0.24F);
+                box(0.37, 0.0, 0.37, 0.4, 1.7, 0.42);
+                box(0.37, 0.0, -0.42, 0.4, 1.7, -0.37);
+                box(0.37, 1.62, -0.37, 0.4, 1.7, 0.37);
+                box(0.37, 0.0, -0.37, 0.4, 0.08, 0.37);
+            } else if (part == 3) {
+                col(0.05F, 0.22F, 0.1F);
+                box(-0.37, 0.12, -0.37, -0.34, 1.6, 0.37);
+                col(0.6F, 0.6F, 0.65F);
+                box(-0.34, 0.95, -0.28, -0.2, 1.3, -0.02);
+                col(0.07F, 0.07F, 0.09F);
+                box(-0.34, 0.5, -0.36, -0.1, 0.72, 0.36);
+                GL11.glDisable(GL11.GL_LIGHTING);
+                col(g[0], g[1], g[2]);
+                for (int i = 0; i < 4; i++) {
+                    box(-0.34, 1.1, 0.06 + 0.07 * i, -0.31, 1.55, 0.08 + 0.07 * i);
+                }
+                for (int j = 0; j < 2; j++) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(-0.095F, 0.61F, -0.15F + 0.3F * j);
+                    GL11.glRotatef(90.0F, 0.0F, 1.0F, 0.0F);
+                    DSK.draw(0.05F, 0.085F, 16, 1);
+                    GL11.glPopMatrix();
+                }
+                GL11.glEnable(GL11.GL_LIGHTING);
+            } else if (part == 4) {
+                for (int j = 0; j < 2; j++) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(-0.33F, 0.3F, -0.2F + 0.4F * j);
+                    GL11.glRotatef(90.0F, 0.0F, 1.0F, 0.0F);
+                    fan(0.13F, 7, j == 0 ? spin : -spin, g);
+                    GL11.glPopMatrix();
+                }
+            } else if (part == 5) {
+                col(0.2F, 0.2F, 0.22F);
+                box(-0.37, 0.03, -0.4, 0.37, 0.3, -0.05);
+                col(0.08F, 0.08F, 0.09F);
+                box(0.2, 0.08, -0.05, 0.36, 0.24, -0.03);
+            } else if (part == 6) {
+                for (int i = 0; i < 6; i++) {
+                    float x = -0.22F + 0.22F * (i % 3);
+                    float z = -0.15F + 0.3F * (i / 3);
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(x, 1.7F, z);
+                    GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                    col(0.8F, 0.12F, 0.1F);
+                    CYL.draw(0.075F, 0.075F, 0.5F, 10, 1);
+                    col(0.1F, 0.1F, 0.1F);
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 0.0F, 0.15F);
+                    CYL.draw(0.078F, 0.078F, 0.05F, 10, 1);
+                    GL11.glPopMatrix();
+                    col(0.85F, 0.75F, 0.5F);
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 0.0F, 0.5F);
+                    DSK.draw(0.0F, 0.075F, 10, 1);
+                    GL11.glPopMatrix();
+                    GL11.glPopMatrix();
+                }
+            } else {
+                col(0.12F, 0.12F, 0.14F);
+                box(-0.25, 1.72, 0.26, 0.25, 1.9, 0.4);
+                col(0.6F, 0.6F, 0.65F);
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.2F, 1.9F, 0.3F);
+                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                CYL.draw(0.012F, 0.012F, 0.3F, 6, 1);
+                GL11.glPopMatrix();
+                GL11.glDisable(GL11.GL_LIGHTING);
+                float pulse = 0.6F + 0.4F * (float) Math.sin(t * (6.0F + heat * 20.0F));
+                col(pulse, 0.1F, 0.1F);
+                box(-0.2, 1.76, 0.4, 0.2, 1.86, 0.41);
+                col(1.0F, 0.1F, 0.1F);
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.2F, 2.2F, 0.3F);
+                SPH.draw(0.03F, 8, 6);
+                GL11.glPopMatrix();
+                GL11.glEnable(GL11.GL_LIGHTING);
+            }
+        }
+
+        static void pc(float t, float heat) {
+            for (int p = 0; p < 8; p++) pcPart(p, t, heat);
             GL11.glDisable(GL11.GL_NORMALIZE);
         }
 
@@ -2066,15 +2476,36 @@ public class BombControlMod {
     public static class RenderShip extends Render {
         @Override
         public void doRender(Entity e, double x, double y, double z, float yaw, float pt) {
+            EntityShip sh = (EntityShip) e;
+            int kind = sh.kind();
             float tm = (e.ticksExisted + pt) / 20.0F;
             GL11.glPushMatrix();
-            GL11.glTranslated(x, y + 4.1D, z);
+            GL11.glTranslated(x, y, z);
             GL11.glRotatef(e.rotationYaw, 0.0F, 1.0F, 0.0F);
-            GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
-            GL11.glScalef(0.72F, 0.72F, 0.72F);
             boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
             GL11.glDisable(GL11.GL_CULL_FACE);
-            Gfx.ship(0.15F, 0.3F + 0.15F * (float) Math.sin(tm * 3.0F), tm, false);
+            if (kind == 4) {
+                GL11.glTranslatef(0.0F, 4.1F, 0.0F);
+                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                GL11.glScalef(0.72F, 0.72F, 0.72F);
+                Gfx.ship(0.15F, 0.3F + 0.15F * (float) Math.sin(tm * 3.0F), tm, false);
+            } else if (kind == 6) {
+                GL11.glScalef(1.3F, 1.3F, 1.3F);
+                Gfx.pc(tm, 0.1F);
+            } else if (kind == 7) {
+                GL11.glScalef(1.8F, 1.8F, 1.8F);
+                GL11.glTranslatef(0.0F, 0.12F, 0.0F);
+                Gfx.col(0.12F, 0.12F, 0.14F);
+                Gfx.modelBegin();
+                GL11.glEnable(GL11.GL_LIGHTING);
+                Gfx.box(-0.9, -0.12, -0.25, 0.9, 0.0, 0.45);
+                Gfx.gpu(tm * 120.0F, 0.1F, tm);
+            } else {
+                GL11.glTranslatef(0.0F, 1.4F, 0.0F);
+                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                GL11.glScalef(1.1F, 1.1F, 1.1F);
+                Gfx.drawBomb(kind, sh.pHue(), tm);
+            }
             if (cull) GL11.glEnable(GL11.GL_CULL_FACE);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
@@ -2148,6 +2579,49 @@ public class BombControlMod {
         }
     }
 
+    @SideOnly(Side.CLIENT)
+    public static class BombItemRenderer implements IItemRenderer {
+        @Override
+        public boolean handleRenderType(ItemStack item, ItemRenderType type) {
+            return type != ItemRenderType.FIRST_PERSON_MAP;
+        }
+
+        @Override
+        public boolean shouldUseRenderHelper(ItemRenderType type, ItemStack item, ItemRendererHelper helper) {
+            return true;
+        }
+
+        @Override
+        public void renderItem(ItemRenderType type, ItemStack item, Object... data) {
+            int d = clamp(item.getItemDamage(), 0, 7);
+            float tm = (System.currentTimeMillis() % 100000L) / 1000.0F;
+            GL11.glPushMatrix();
+            if (type == ItemRenderType.EQUIPPED || type == ItemRenderType.EQUIPPED_FIRST_PERSON) {
+                GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F);
+                GL11.glRotatef(-45.0F, 0.0F, 1.0F, 0.0F);
+            }
+            boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+            if (d == 6) {
+                GL11.glScalef(0.38F, 0.38F, 0.38F);
+                GL11.glTranslatef(0.0F, -1.05F, 0.0F);
+                Gfx.pc(tm, 0.2F);
+            } else if (d == 7) {
+                GL11.glScalef(0.5F, 0.5F, 0.5F);
+                GL11.glTranslatef(0.0F, -0.35F, 0.0F);
+                Gfx.gpu(tm * 200.0F, 0.2F, tm);
+            } else {
+                GL11.glScalef(0.35F, 0.35F, 0.35F);
+                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                Gfx.drawBomb(d, 20, tm);
+            }
+            if (cull) GL11.glEnable(GL11.GL_CULL_FACE);
+            GL11.glPopMatrix();
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        }
+    }
+
     // ============================================================================================
     // PAINEL DO CONTROLE (GUI com mouse)
     // ============================================================================================
@@ -2185,7 +2659,7 @@ public class BombControlMod {
             cardX = 6;
             cardW = Math.min(124, width / 3);
             cardY0 = 30;
-            cardH = Math.max(26, (height - 40) / 6);
+            cardH = Math.max(22, (height - 40) / 8);
             rx0 = cardX + cardW + 8;
             rw = width - rx0 - 6;
             mapX = rx0;
@@ -2211,16 +2685,20 @@ public class BombControlMod {
                 fz.setMaxStringLength(9);
                 fx.setText(String.valueOf((int) Math.floor(Client.tgtX)));
                 fz.setText(String.valueOf((int) Math.floor(Client.tgtZ)));
+                boolean pl = Client.selBomb == 4 || Client.selBomb == 6 || Client.selBomb == 7;
                 String lb;
                 if (Client.mode == 1) {
                     lb = "MIRAR";
                 } else {
-                    lb = Client.selBomb == 4 ? "POSICIONAR NAVE" : "LANCAR BOMBA";
+                    lb = pl ? "POSICIONAR" : "LANCAR BOMBA";
                 }
-                buttonList.add(new GuiButton(14, rcx, 138, rcw, 22, lb));
-                if (Client.selBomb == 4) {
-                    buttonList.add(new GuiButton(15, rcx, 164, rcw, 22, "DETONAR NAVE"));
+                buttonList.add(new GuiButton(14, rcx, 138, rcw, 20, lb));
+                int by2 = 160;
+                if (!pl) {
+                    buttonList.add(new GuiButton(16, rcx, by2, rcw, 20, "COLOCAR NO CHAO"));
+                    by2 += 22;
                 }
+                buttonList.add(new GuiButton(15, rcx, by2, rcw, 20, "DETONAR COLOCADA"));
             } else if (tab == 1) {
                 int bx = rx0 + rw - 90;
                 buttonList.add(new GuiButton(20, bx, 34, 20, 18, "-"));
@@ -2295,12 +2773,17 @@ public class BombControlMod {
                 if (Client.mode == 0) {
                     Client.sendLaunch(Client.selBomb, 0, Client.tgtX, mc.thePlayer.posY, Client.tgtZ);
                     info = "Enviado: " + BOMB_NAMES[Client.selBomb] + " em " + (int) Client.tgtX + ", " + (int) Client.tgtZ;
+                    mc.displayGuiScreen(null);
                 } else {
                     Client.aiming = true;
                     mc.displayGuiScreen(null);
                 }
             } else if (id == 15) {
                 Client.sendLaunch(4, 3, 0.0D, 0.0D, 0.0D);
+                mc.displayGuiScreen(null);
+            } else if (id == 16) {
+                parseFields();
+                Client.sendLaunch(Client.selBomb, 5, Client.tgtX, mc.thePlayer.posY, Client.tgtZ);
                 mc.displayGuiScreen(null);
             } else if (id == 20) {
                 Client.cRadius = Math.max(8, Client.cRadius - 4);
@@ -2360,7 +2843,7 @@ public class BombControlMod {
         protected void mouseClicked(int mx, int my, int btn) {
             super.mouseClicked(mx, my, btn);
             if (btn != 0) return;
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < BOMB_NAMES.length; i++) {
                 int y = cardY0 + i * cardH;
                 if (mx >= cardX && mx < cardX + cardW && my >= y && my < y + cardH - 2) {
                     parseFields();
@@ -2488,7 +2971,7 @@ public class BombControlMod {
             drawDefaultBackground();
             fontRendererObj.drawStringWithShadow("CONTROLE NUCLEAR", cardX, 10, 0xFF5544);
             long now = System.currentTimeMillis();
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < BOMB_NAMES.length; i++) {
                 int y = cardY0 + i * cardH;
                 boolean sel = i == Client.selBomb;
                 boolean hov = mx >= cardX && mx < cardX + cardW && my >= y && my < y + cardH - 2;
@@ -2555,11 +3038,15 @@ public class BombControlMod {
             {20.0F, 70.0F, -170.0F, 80.0F, 0.9F, 0.2F, 0.5F}, {-60.0F, -60.0F, 110.0F, 55.0F, 0.2F, 0.4F, 0.8F}};
 
         final float D;
+        final int kind;
+        final float N;
         long start = 0L;
-        final boolean[] cue = new boolean[8];
+        final boolean[] cue = new boolean[10];
 
-        public GuiCutscene(float seconds) {
+        public GuiCutscene(float seconds, int kind) {
             this.D = Math.max(6.0F, seconds);
+            this.kind = kind;
+            this.N = kind == 1 ? 24.0F : 22.0F;
         }
 
         static float[] norm(float x, float y, float z) {
@@ -2662,11 +3149,29 @@ public class BombControlMod {
         }
 
         void playCues(float tt) {
-            float[] at = {0.1F, 4.0F, 9.4F, 11.5F, 14.0F, 16.5F, 18.0F, 18.2F};
-            String[] snd = {"portal.travel", "fireworks.launch", "mob.endermen.portal", "mob.wither.spawn", "mob.enderdragon.growl",
-                "fireworks.launch", "random.explode", "ambient.weather.thunder"};
-            float[] vol = {1.0F, 3.0F, 2.0F, 2.0F, 3.0F, 4.0F, 8.0F, 6.0F};
-            float[] pit = {0.8F, 0.7F, 0.6F, 0.6F, 0.5F, 0.4F, 0.4F, 0.5F};
+            float[] at;
+            String[] snd;
+            float[] vol;
+            float[] pit;
+            if (kind == 0) {
+                at = new float[] {0.1F, 4.0F, 9.4F, 11.5F, 14.0F, 16.5F, 18.0F, 18.2F};
+                snd = new String[] {"portal.travel", "fireworks.launch", "mob.endermen.portal", "mob.wither.spawn", "mob.enderdragon.growl",
+                    "fireworks.launch", "random.explode", "ambient.weather.thunder"};
+                vol = new float[] {1.0F, 3.0F, 2.0F, 2.0F, 3.0F, 4.0F, 8.0F, 6.0F};
+                pit = new float[] {0.8F, 0.7F, 0.6F, 0.6F, 0.5F, 0.4F, 0.4F, 0.5F};
+            } else if (kind == 1) {
+                at = new float[] {0.1F, 1.2F, 2.2F, 3.2F, 5.0F, 8.0F, 11.5F, 11.7F, 13.3F, 14.7F};
+                snd = new String[] {"portal.travel", "random.anvil_land", "random.anvil_land", "random.levelup", "random.fuse",
+                    "mob.wither.spawn", "random.explode", "ambient.weather.thunder", "random.explode", "random.explode"};
+                vol = new float[] {1.0F, 1.5F, 1.5F, 2.0F, 2.0F, 2.0F, 8.0F, 6.0F, 6.0F, 6.0F};
+                pit = new float[] {0.8F, 0.8F, 1.0F, 1.0F, 1.0F, 0.6F, 0.4F, 0.5F, 0.5F, 0.4F};
+            } else {
+                at = new float[] {0.1F, 3.0F, 6.0F, 9.0F, 12.0F, 13.0F, 13.4F};
+                snd = new String[] {"portal.travel", "mob.endermen.portal", "mob.enderdragon.growl", "mob.wither.spawn", "random.fuse",
+                    "random.explode", "ambient.weather.thunder"};
+                vol = new float[] {1.0F, 2.0F, 2.0F, 2.0F, 3.0F, 8.0F, 6.0F};
+                pit = new float[] {0.8F, 0.5F, 0.4F, 0.5F, 0.6F, 0.3F, 0.4F};
+            }
             for (int i = 0; i < at.length; i++) {
                 if (!cue[i] && tt >= at[i]) {
                     cue[i] = true;
@@ -2684,11 +3189,19 @@ public class BombControlMod {
                 mc.displayGuiScreen(null);
                 return;
             }
-            float tt = t * 22.0F / D;
+            float tt = t * N / D;
             playCues(tt);
             drawRect(0, 0, width, height, 0xFF000000);
-            scene(tt, t);
-            overlay(tt);
+            if (kind == 0) {
+                scene(tt, t);
+                overlay(tt);
+            } else if (kind == 1) {
+                scenePc(tt, t);
+                overlayPc(tt);
+            } else {
+                sceneGpu(tt, t);
+                overlayGpu(tt);
+            }
         }
 
         float[] camera(float tt, float spx, float spy, float spz, float nx, float ny, float nz) {
@@ -2992,6 +3505,512 @@ public class BombControlMod {
             Gfx.DSK.draw(0.0F, 1.22F, 40, 1);
             GL11.glPopMatrix();
             GL11.glEnable(GL11.GL_LIGHTING);
+        }
+
+        // ===================== PC BOMBA e RTX BOMBA =====================
+        static final float[][] PIECE = new float[8][8];
+
+        static {
+            Random r = new Random(7L);
+            for (int i = 0; i < 8; i++) {
+                float[] d = norm(r.nextFloat() - 0.5F + 0.01F, r.nextFloat() * 0.8F + 0.2F, r.nextFloat() - 0.5F);
+                float[] a = norm(r.nextFloat() - 0.5F + 0.01F, r.nextFloat() - 0.5F, r.nextFloat() - 0.5F);
+                PIECE[i][0] = d[0];
+                PIECE[i][1] = d[1];
+                PIECE[i][2] = d[2];
+                PIECE[i][3] = 2.5F + r.nextFloat() * 3.5F;
+                PIECE[i][4] = a[0];
+                PIECE[i][5] = a[1];
+                PIECE[i][6] = a[2];
+                PIECE[i][7] = 90.0F + r.nextFloat() * 270.0F;
+            }
+        }
+
+        boolean begin3D(float[] c) {
+            boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+            GL11.glMatrixMode(GL11.GL_PROJECTION);
+            GL11.glPushMatrix();
+            GL11.glLoadIdentity();
+            GLU.gluPerspective(c[6], (float) mc.displayWidth / (float) mc.displayHeight, 0.1F, 400.0F);
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+            GL11.glPushMatrix();
+            GL11.glLoadIdentity();
+            GLU.gluLookAt(c[0], c[1], c[2], c[3], c[4], c[5], 0.0F, 1.0F, 0.0F);
+            GL11.glDisable(GL11.GL_CULL_FACE);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthMask(true);
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+            drawSpace(c);
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glEnable(GL11.GL_LIGHTING);
+            RenderHelper.enableStandardItemLighting();
+            GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+            return cull;
+        }
+
+        void end3D(boolean cull) {
+            GL11.glDepthMask(true);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glDisable(GL11.GL_CLIP_PLANE0);
+            RenderHelper.disableStandardItemLighting();
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+            GL11.glPopMatrix();
+            GL11.glMatrixMode(GL11.GL_PROJECTION);
+            GL11.glPopMatrix();
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            if (cull) GL11.glEnable(GL11.GL_CULL_FACE);
+        }
+
+        void glowBegin() {
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE);
+            GL11.glDepthMask(false);
+        }
+
+        void glowEnd() {
+            GL11.glDepthMask(true);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDisable(GL11.GL_BLEND);
+            GL11.glEnable(GL11.GL_LIGHTING);
+        }
+
+        void drawGrid(float hot) {
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glDisable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE);
+            GL11.glDepthMask(false);
+            GL11.glLineWidth(1.5F);
+            GL11.glBegin(GL11.GL_LINES);
+            for (int i = -30; i <= 30; i++) {
+                float a = (i % 5 == 0) ? 0.55F : 0.22F;
+                GL11.glColor4f(0.1F + 0.9F * hot, 0.8F - 0.6F * hot, 1.0F - 0.8F * hot, a);
+                GL11.glVertex3f(-30.0F, 0.0F, i);
+                GL11.glVertex3f(30.0F, 0.0F, i);
+                GL11.glVertex3f(i, 0.0F, -30.0F);
+                GL11.glVertex3f(i, 0.0F, 30.0F);
+            }
+            GL11.glEnd();
+            GL11.glDepthMask(true);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDisable(GL11.GL_BLEND);
+        }
+
+        // bola de fogo (usa o estado aditivo ja ligado)
+        void blast(float cx, float cy, float cz, float e, float maxR, float life, float rate) {
+            if (e < 0.0F || e > life) return;
+            float p = e / life;
+            float rr = maxR * (1.0F - (float) Math.exp(-e * rate)) + 0.1F;
+            float[] fc = Gfx.fireColor(p);
+            float al = (float) Math.pow(1.0F - p, 0.7F);
+            GL11.glPushMatrix();
+            GL11.glTranslatef(cx, cy + rr * 0.3F, cz);
+            Gfx.col(fc[0], fc[1], fc[2], 0.8F * al);
+            Gfx.SPH.draw(rr, 24, 16);
+            Gfx.col(1.0F, 0.9F - 0.5F * p, 0.5F - 0.4F * p, 0.5F * al);
+            Gfx.SPH.draw(rr * 0.7F, 18, 12);
+            Gfx.col(1.0F, 1.0F, 0.9F, 0.7F * al);
+            Gfx.SPH.draw(rr * 0.35F, 12, 8);
+            GL11.glPopMatrix();
+        }
+
+        float[] cameraPc(float tt, float e, float heat) {
+            float ex, ey, ez, ty, fov;
+            float a = 0.8F + tt * 0.25F;
+            float sh;
+            if (tt < 3.2F) {
+                ex = 7.5F * (float) Math.cos(a);
+                ey = 3.0F;
+                ez = 7.5F * (float) Math.sin(a);
+                ty = 1.5F;
+                fov = 55.0F;
+                sh = 0.0F;
+            } else if (tt < 8.0F) {
+                float k = tt - 3.2F;
+                float r = 7.5F - k * 0.6F;
+                ex = r * (float) Math.cos(a);
+                ey = 3.0F - k * 0.15F;
+                ez = r * (float) Math.sin(a);
+                ty = 1.7F;
+                fov = 50.0F - k;
+                sh = 0.004F + 0.03F * heat * heat;
+            } else if (tt < 11.5F) {
+                float k = tt - 8.0F;
+                float r = 4.6F - k * 0.35F;
+                ex = r * (float) Math.cos(a);
+                ey = 2.4F;
+                ez = r * (float) Math.sin(a);
+                ty = 2.4F;
+                fov = 45.0F;
+                sh = 0.01F + 0.06F * heat * heat;
+            } else {
+                float a2 = 0.8F + 11.5F * 0.25F + e * 0.12F;
+                float r = 9.0F + e * 1.1F;
+                ex = r * (float) Math.cos(a2);
+                ey = 2.5F + e * 0.35F;
+                ez = r * (float) Math.sin(a2);
+                ty = 2.5F + e * 0.25F;
+                fov = 60.0F;
+                sh = 0.5F * (float) Math.exp(-e * 0.7F);
+            }
+            ex += (float) Math.sin(tt * 91.0F) * sh;
+            ey += (float) Math.cos(tt * 77.0F) * sh;
+            return new float[] {ex, ey, ez, 0.0F, ty, 0.0F, fov};
+        }
+
+        void scenePc(float tt, float t) {
+            float e = tt - 11.5F;
+            float heat = smooth((tt - 4.0F) / 7.5F);
+            float[] c = cameraPc(tt, e, heat);
+            boolean cull = begin3D(c);
+            float sc = 1.4F;
+            for (int i = 0; i < 8; i++) {
+                float[] p = PIECE[i];
+                GL11.glPushMatrix();
+                if (e < 0.0F) {
+                    float k = smooth((tt - 0.2F - 0.18F * i) / 1.6F);
+                    float inv = 1.0F - k;
+                    float dd = (8.0F + 3.0F * i) * inv;
+                    GL11.glTranslatef(p[0] * dd, p[1] * dd, p[2] * dd);
+                    if (inv > 0.001F) GL11.glRotatef(inv * 360.0F, p[4], p[5], p[6]);
+                    GL11.glScalef(sc, sc, sc);
+                    float j = heat * heat * 0.02F;
+                    GL11.glTranslatef((float) Math.sin(t * 60.0F) * j, 0.0F, (float) Math.cos(t * 53.0F) * j);
+                } else {
+                    float ex = (1.0F - (float) Math.exp(-e * 1.5F)) / 1.5F;
+                    float py = Math.max(p[1] * p[3] * ex - 0.8F * e * e, -1.0F);
+                    GL11.glTranslatef(p[0] * p[3] * ex, py, p[2] * p[3] * ex);
+                    GL11.glRotatef(p[7] * (1.0F - (float) Math.exp(-e)), p[4], p[5], p[6]);
+                    GL11.glScalef(sc, sc, sc);
+                }
+                Gfx.pcPart(i, t, heat);
+                GL11.glPopMatrix();
+            }
+            GL11.glDisable(GL11.GL_NORMALIZE);
+            drawGrid(e < 0.0F ? heat * 0.5F : 0.8F);
+            if (e > 1.5F) {
+                GL11.glDisable(GL11.GL_LIGHTING);
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GL11.glDepthMask(false);
+                float grow = smooth((e - 1.5F) / 6.0F);
+                float al = e < 12.0F ? 0.9F : Math.max(0.0F, 0.9F * (1.0F - (e - 12.0F) / 6.0F));
+                float stemH = 8.0F * grow;
+                GL11.glPushMatrix();
+                GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                Gfx.col(0.30F, 0.25F, 0.22F, al);
+                Gfx.CYL.draw(0.9F * grow + 0.1F, 0.5F * grow + 0.1F, stemH + 0.01F, 14, 1);
+                GL11.glPopMatrix();
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.0F, stemH, 0.0F);
+                GL11.glScalef(1.0F, 0.55F, 1.0F);
+                Gfx.col(0.32F, 0.27F, 0.24F, al);
+                Gfx.SPH.draw(4.0F * grow + 0.1F, 22, 14);
+                GL11.glPopMatrix();
+                GL11.glPushMatrix();
+                GL11.glScalef(1.0F, 0.35F, 1.0F);
+                Gfx.col(0.45F, 0.38F, 0.32F, 0.35F * al);
+                Gfx.SPH.draw(6.0F * grow + 0.5F, 18, 12);
+                GL11.glPopMatrix();
+                GL11.glDepthMask(true);
+            }
+            glowBegin();
+            if (e < 0.0F && heat > 0.4F) {
+                float pulse = 0.5F + 0.5F * (float) Math.sin(t * (6.0F + heat * 20.0F));
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.0F, 1.5F, 0.0F);
+                Gfx.col(1.0F, 0.2F, 0.1F, 0.12F * heat * (0.5F + pulse));
+                Gfx.SPH.draw(2.0F + 0.5F * pulse, 16, 12);
+                GL11.glPopMatrix();
+            }
+            blast(0.0F, 1.2F, 0.0F, e, 7.0F, 5.0F, 2.4F);
+            blast(1.5F, 1.5F, -1.0F, e - 1.8F, 5.0F, 4.2F, 2.4F);
+            blast(-1.8F, 1.0F, 1.5F, e - 3.2F, 5.5F, 4.0F, 2.4F);
+            if (e >= 0.0F) {
+                if (e < 4.0F) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 1.2F, 0.0F);
+                    Gfx.col(1.0F, 0.85F, 0.6F, 0.35F * (1.0F - e / 4.0F));
+                    Gfx.SPH.draw(e * 16.0F + 0.01F, 28, 18);
+                    Gfx.col(0.5F, 0.8F, 1.0F, 0.25F * (1.0F - e / 4.0F));
+                    Gfx.SPH.draw(e * 10.0F + 0.01F, 24, 16);
+                    GL11.glPopMatrix();
+                }
+                if (e < 4.5F) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 0.05F, 0.0F);
+                    GL11.glRotatef(-90.0F, 1.0F, 0.0F, 0.0F);
+                    Gfx.col(1.0F, 0.8F, 0.5F, 0.6F * (1.0F - e / 4.5F));
+                    Gfx.DSK.draw(Math.max(0.0F, e * 14.0F - 1.2F), e * 14.0F + 0.01F, 48, 1);
+                    GL11.glPopMatrix();
+                }
+                if (e < 4.2F) {
+                    float ex2 = (1.0F - (float) Math.exp(-2.0F * e)) / 2.0F;
+                    for (int i = 0; i < DEB.length; i++) {
+                        float[] d = DEB[i];
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(d[0] * d[3] * 3.0F * ex2, 1.2F + d[1] * d[3] * 3.0F * ex2 - 0.9F * e * e, d[2] * d[3] * 3.0F * ex2);
+                        GL11.glRotatef(e * 300.0F * d[4], d[0], d[1], d[2]);
+                        Gfx.col(1.0F, 0.7F, 0.2F, 1.0F - e / 4.2F);
+                        Gfx.box(-d[4] * 0.7F, -d[4] * 0.7F, -d[4] * 0.7F, d[4] * 0.7F, d[4] * 0.7F, d[4] * 0.7F);
+                        GL11.glPopMatrix();
+                    }
+                }
+                if (e > 1.5F && e < 9.0F) {
+                    float grow = smooth((e - 1.5F) / 6.0F);
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 8.0F * grow, 0.0F);
+                    GL11.glScalef(1.0F, 0.55F, 1.0F);
+                    Gfx.col(1.0F, 0.45F, 0.1F, 0.35F * (1.0F - e / 9.0F));
+                    Gfx.SPH.draw(3.2F * grow + 0.05F, 18, 12);
+                    GL11.glPopMatrix();
+                }
+            }
+            glowEnd();
+            end3D(cull);
+        }
+
+        static float gpuSpin(float tt) {
+            if (tt < 3.0F) return tt * 30.0F;
+            float x = tt - 3.0F;
+            return 90.0F + 30.0F * x + 6000.0F / (4.0F * 729.0F) * x * x * x * x;
+        }
+
+        float[] cameraGpu(float tt, float heat) {
+            float phi, r, h, fov, sh;
+            if (tt < 3.0F) {
+                phi = 1.0F - tt * 0.2F;
+                r = 7.0F - tt * 0.9F;
+                h = 1.8F;
+                fov = 45.0F;
+                sh = 0.0F;
+            } else if (tt < 13.0F) {
+                float x = tt - 3.0F;
+                phi = 0.4F * (float) Math.sin(x * 0.5F);
+                r = 4.3F - x * 0.17F;
+                h = 1.7F;
+                fov = 50.0F - x * 0.7F;
+                sh = 0.003F + 0.04F * heat * heat * heat;
+            } else {
+                float x = tt - 13.0F;
+                phi = 0.4F * (float) Math.sin(5.0F) + x * 0.28F;
+                r = 3.5F + x * 0.45F;
+                h = 1.9F + x * 0.12F;
+                fov = 55.0F;
+                sh = 0.1F * (float) Math.exp(-x * 0.6F);
+            }
+            float ex = r * (float) Math.sin(phi) + (float) Math.sin(tt * 91.0F) * sh;
+            float ez = r * (float) Math.cos(phi);
+            float ey = h + (float) Math.cos(tt * 77.0F) * sh;
+            return new float[] {ex, ey, ez, 0.0F, 1.5F, 0.0F, fov};
+        }
+
+        void gpuXform(float yaw, float sc) {
+            GL11.glTranslatef(0.0F, 1.5F, 0.0F);
+            GL11.glRotatef(yaw, 0.0F, 1.0F, 0.0F);
+            GL11.glScalef(sc, sc, sc);
+            GL11.glTranslatef(0.0F, -0.35F, 0.0F);
+        }
+
+        void sceneGpu(float tt, float t) {
+            float heat = smooth((tt - 3.0F) / 10.0F);
+            float s = tt < 13.0F ? 0.0F : (tt - 13.0F) * 0.2F;
+            float[] c = cameraGpu(tt, heat);
+            boolean cull = begin3D(c);
+            float sc = 2.2F;
+            float yaw = 20.0F * (float) Math.sin(Math.min(tt, 13.0F) * 0.45F);
+            float spin = gpuSpin(Math.min(tt, 13.0F));
+            float spinNow = spin + 8230.0F * s;
+            for (int p = 0; p < 7; p++) {
+                float[] ctr = Gfx.gpuCenter(p);
+                float[] pc = PIECE[p];
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.0F, 1.5F, 0.0F);
+                if (s > 0.0F) {
+                    GL11.glTranslatef(pc[0] * pc[3] * s * 0.9F, pc[1] * pc[3] * s * 0.9F - 0.15F * s * s, pc[2] * pc[3] * s * 0.9F);
+                }
+                GL11.glRotatef(yaw, 0.0F, 1.0F, 0.0F);
+                if (s > 0.0F) GL11.glRotatef(s * pc[7] * 3.0F, pc[4], pc[5], pc[6]);
+                GL11.glScalef(sc, sc, sc);
+                GL11.glTranslatef(0.0F, -0.35F, 0.0F);
+                GL11.glTranslatef(ctr[0], ctr[1], ctr[2]);
+                Gfx.gpuPart(p, spinNow, heat, t);
+                GL11.glPopMatrix();
+            }
+            GL11.glDisable(GL11.GL_NORMALIZE);
+            if (s > 0.0F) {
+                GL11.glEnable(GL11.GL_LIGHTING);
+                for (int i = 0; i < 36; i++) {
+                    float[] d = DEB[i];
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(d[0] * d[3] * s * 0.8F, 1.5F + d[1] * d[3] * s * 0.8F - 0.15F * s * s, d[2] * d[3] * s * 0.8F);
+                    GL11.glRotatef(s * 300.0F * d[4] * 10.0F, d[0], d[1], d[2]);
+                    if (i % 2 == 0) {
+                        Gfx.col(0.05F, 0.2F, 0.1F);
+                    } else {
+                        Gfx.col(0.1F, 0.1F, 0.12F);
+                    }
+                    Gfx.box(-d[4] * 0.9F, -d[4] * 0.1F, -d[4] * 0.9F, d[4] * 0.9F, d[4] * 0.1F, d[4] * 0.9F);
+                    GL11.glPopMatrix();
+                }
+            }
+            drawGrid(heat * 0.7F);
+            glowBegin();
+            if (s <= 0.0F) {
+                GL11.glPushMatrix();
+                GL11.glTranslatef(0.0F, 1.5F, 0.0F);
+                Gfx.col(1.0F, 0.3F, 0.1F, 0.10F * heat);
+                Gfx.SPH.draw(3.2F, 18, 12);
+                GL11.glPopMatrix();
+                float[] g = Gfx.rgb(t, heat);
+                GL11.glPushMatrix();
+                gpuXform(yaw, sc);
+                if (tt > 8.0F) {
+                    float al = Math.min(0.5F, (tt - 8.0F) / 5.0F * 0.5F);
+                    for (int f = 2; f <= 4; f++) {
+                        float[] ctr = Gfx.gpuCenter(f);
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(ctr[0], ctr[1], ctr[2] + 0.215F);
+                        Gfx.col(g[0], g[1], g[2], al);
+                        Gfx.DSK.draw(0.02F, 0.24F, 24, 1);
+                        GL11.glPopMatrix();
+                    }
+                }
+                if (tt > 9.5F) {
+                    float inten = Math.min(1.0F, (tt - 9.5F) / 3.5F);
+                    for (int i = 0; i < 24; i++) {
+                        float[] d = DEB[i];
+                        float[] ctr = Gfx.gpuCenter(2 + i % 3);
+                        float fr = (tt * 2.5F + i * 0.37F) % 1.0F;
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(ctr[0] + d[0] * fr * 0.7F, ctr[1] + d[1] * fr * 0.7F, ctr[2] + 0.2F + Math.abs(d[2]) * fr * 0.7F);
+                        Gfx.col(1.0F, 0.8F, 0.3F, (1.0F - fr) * inten);
+                        Gfx.box(-0.012D, -0.012D, -0.012D, 0.012D, 0.012D, 0.012D);
+                        GL11.glPopMatrix();
+                    }
+                }
+                GL11.glPopMatrix();
+            } else {
+                blast(0.0F, 1.5F, 0.0F, s, 6.0F, 1.5F, 2.0F);
+                for (int i = 0; i < 5; i++) {
+                    float[] d = DEB[i];
+                    blast(d[0] * 1.2F, 1.5F + d[1] * 1.2F, d[2] * 1.2F, s - 0.08F * i, 2.5F, 1.2F, 2.0F);
+                }
+                if (s < 1.5F) {
+                    GL11.glPushMatrix();
+                    GL11.glTranslatef(0.0F, 1.5F, 0.0F);
+                    Gfx.col(1.0F, 0.9F, 0.7F, 0.3F * (1.0F - s / 1.5F));
+                    Gfx.SPH.draw(s * 14.0F + 0.01F, 28, 18);
+                    GL11.glPopMatrix();
+                    for (int i = 0; i < DEB.length; i++) {
+                        float[] d = DEB[i];
+                        GL11.glPushMatrix();
+                        GL11.glTranslatef(d[0] * d[3] * 1.6F * s, 1.5F + d[1] * d[3] * 1.6F * s, d[2] * d[3] * 1.6F * s);
+                        Gfx.col(1.0F, 0.6F, 0.2F, 1.0F - s / 1.5F);
+                        Gfx.box(-d[4] * 0.35F, -d[4] * 0.35F, -d[4] * 0.35F, d[4] * 0.35F, d[4] * 0.35F, d[4] * 0.35F);
+                        GL11.glPopMatrix();
+                    }
+                }
+            }
+            glowEnd();
+            end3D(cull);
+        }
+
+        void prep2D() {
+            GL11.glDisable(GL11.GL_LIGHTING);
+            RenderHelper.disableStandardItemLighting();
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            GL11.glEnable(GL11.GL_ALPHA_TEST);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        }
+
+        void bars(float frac) {
+            int bar = (int) (height * frac);
+            drawRect(0, 0, width, bar, 0xFF000000);
+            drawRect(0, height - bar, width, height, 0xFF000000);
+            drawGradientRect(0, bar, width, bar + 26, 0x99000000, 0x00000000);
+            drawGradientRect(0, height - bar - 26, width, height - bar, 0x00000000, 0x99000000);
+        }
+
+        void whiteFlash(float wf) {
+            if (wf > 0.02F) {
+                drawRect(0, 0, width, height, ((int) (Math.min(1.0F, wf) * 255.0F) << 24) | 0xFFFFFF);
+            }
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        }
+
+        void overlayPc(float tt) {
+            prep2D();
+            bars(0.11F);
+            int bar = (int) (height * 0.11F);
+            float ty = height - bar - 44;
+            txt("P C   B O M B A", ty, 3.0F, 0x66CCFF, win(tt, 0.3F, 3.2F));
+            txt("Montando o dispositivo...", ty + 30.0F, 1.1F, 0xFFFFFF, win(tt, 0.8F, 3.2F));
+            txt("SISTEMA ONLINE", ty, 2.6F, 0x55FF99, win(tt, 3.4F, 5.2F));
+            if (tt >= 5.0F && tt < 11.5F) {
+                int n = (int) Math.ceil(11.5F - tt);
+                float pulse = 0.75F + 0.25F * (float) Math.sin(tt * 12.0F);
+                txt("DETONACAO EM", height * 0.13F, 1.4F, 0xFFAA44, 1.0F);
+                txt(String.valueOf(n), height * 0.19F, 6.0F, 0xFF3030, pulse);
+            }
+            txt("KABOOM!", ty - 6.0F, 5.0F, 0xFFAA33, win(tt, 11.6F, 14.4F));
+            txt("FIM DE JOGO", ty, 3.0F, 0xFF6644, win(tt, 18.0F, 22.0F));
+            txt("O PC explodiu.", ty + 30.0F, 1.1F, 0xFFFFFF, win(tt, 18.6F, 22.0F));
+            float wf = 0.0F;
+            if (tt >= 11.5F && tt < 12.8F) {
+                wf = tt < 11.6F ? 1.0F : 1.0F - (tt - 11.6F) / 1.2F;
+            }
+            float[] cuts = {3.2F, 5.0F, 8.0F, 13.3F, 14.7F};
+            for (int i = 0; i < cuts.length; i++) {
+                float dd = Math.abs(tt - cuts[i]);
+                if (dd < 0.1F) wf = Math.max(wf, (i >= 3 ? 0.7F : 0.5F) * (1.0F - dd / 0.1F));
+            }
+            if (tt > 22.3F) wf = Math.max(wf, Math.min(1.0F, (tt - 22.3F) / 1.7F));
+            whiteFlash(wf);
+        }
+
+        void overlayGpu(float tt) {
+            prep2D();
+            float bf = tt >= 13.0F ? 0.15F : 0.11F;
+            bars(bf);
+            int bar = (int) (height * bf);
+            float ty = height - bar - 44;
+            txt("R T X   B O M B A", ty, 3.0F, 0x88FF44, win(tt, 0.3F, 3.2F));
+            txt("Placa de video experimental", ty + 30.0F, 1.1F, 0xFFFFFF, win(tt, 0.8F, 3.2F));
+            if (tt >= 3.0F && tt < 13.0F) {
+                float heat = smooth((tt - 3.0F) / 10.0F);
+                float x = tt - 3.0F;
+                float v = 30.0F + 6000.0F * (float) Math.pow(x / 9.0D, 3.0D);
+                int temp = (int) (45.0F + 900.0F * heat * heat);
+                int rpm = (int) (v * 12.0F);
+                int bx = 10;
+                int by = bar + 10;
+                fontRendererObj.drawStringWithShadow("TEMP: " + temp + " C", bx, by, 0xFFFFFF);
+                drawRect(bx, by + 10, bx + 100, by + 16, 0xFF202020);
+                drawRect(bx, by + 10, bx + (int) (100 * heat), by + 16, heat < 0.5F ? 0xFFFFAA33 : 0xFFFF2222);
+                fontRendererObj.drawStringWithShadow("VENTOINHA: " + rpm + " RPM", bx, by + 22, 0xFFFFFF);
+                float rr = Math.min(1.0F, v / 6000.0F);
+                drawRect(bx, by + 32, bx + 100, by + 38, 0xFF202020);
+                drawRect(bx, by + 32, bx + (int) (100 * rr), by + 38, 0xFF55DDFF);
+                if (heat > 0.65F && ((int) (tt * 4.0F) % 2 == 0)) {
+                    txt("SUPERAQUECIMENTO!", height * 0.2F, 2.4F, 0xFF3030, 1.0F);
+                }
+            }
+            txt("FALHA CRITICA!", height * 0.22F, 3.5F, 0xFF2020, win(tt, 12.0F, 13.2F));
+            txt("CAMERA LENTA", ty, 2.4F, 0x99DDFF, win(tt, 13.4F, 17.0F));
+            txt("DESTRUIDA.", ty, 3.0F, 0xFFAA66, win(tt, 17.4F, 20.4F));
+            float wf = 0.0F;
+            if (tt >= 13.0F && tt < 14.2F) wf = 1.0F - (tt - 13.0F) / 1.2F;
+            if (tt > 20.3F) wf = Math.max(wf, Math.min(1.0F, (tt - 20.3F) / 1.7F));
+            whiteFlash(wf);
         }
 
         void txt(String s, float cy, float scale, int rgb, float alpha) {
